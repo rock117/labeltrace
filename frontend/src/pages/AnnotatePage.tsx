@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, getUserId } from '../lib/api'
 import type {
@@ -18,6 +18,7 @@ import {
 } from '../annotation/toolRegistry'
 import { AnnotatorCanvas, classColorCss } from '../annotation/AnnotatorCanvas'
 import { formatError } from '../hooks/useAsync'
+import { AuthImage } from '../components/AuthImage'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
 import { appConfirm } from '../store/dialogStore'
@@ -57,6 +58,7 @@ function AnnotateInner() {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [applying, setApplying] = useState(false)
+  const stripRef = useRef<HTMLDivElement>(null)
 
   const applyVersionToWorkspace = async () => {
     if (!versionParam || !version) return
@@ -291,9 +293,10 @@ function AnnotateInner() {
     }
   }
 
-  const go = async (delta: number) => {
+  const goTo = async (next: number) => {
     if (members.length === 0) return
-    const next = (index + delta + members.length) % members.length
+    const safe = ((next % members.length) + members.length) % members.length
+    if (safe === index && asset) return
     setLoading(true)
     try {
       await showMember({
@@ -301,7 +304,7 @@ function AnnotateInner() {
         verId: versionParam,
         mem: members,
         entries: snapshotEntries,
-        idx: next,
+        idx: safe,
       })
     } catch (e) {
       setError(formatError(e))
@@ -309,6 +312,17 @@ function AnnotateInner() {
       setLoading(false)
     }
   }
+
+  const go = async (delta: number) => {
+    await goTo(index + delta)
+  }
+
+  useEffect(() => {
+    const el = stripRef.current?.querySelector<HTMLElement>(
+      `[data-member-index="${index}"]`,
+    )
+    el?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+  }, [index])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -523,6 +537,37 @@ function AnnotateInner() {
           ) : (
             <LoadingBlock />
           )}
+
+          <div className="lt-filmstrip-wrap">
+            <div className="lt-filmstrip-head">
+              <span>全部图片</span>
+              <span className="lt-muted">
+                {index + 1} / {members.length}
+              </span>
+            </div>
+            <div className="lt-filmstrip" ref={stripRef}>
+              {members.map((m, i) => {
+                const snapStatus = snapshotEntries[i]?.annotationStatus
+                return (
+                  <button
+                    key={m.asset_id}
+                    type="button"
+                    data-member-index={i}
+                    className={`lt-filmstrip-item${i === index ? ' active' : ''}`}
+                    title={m.filename}
+                    disabled={saving || applying}
+                    onClick={() => void goTo(i)}
+                  >
+                    <AuthImage assetId={m.asset_id} alt={m.filename} />
+                    <span className="lt-filmstrip-idx">{i + 1}</span>
+                    {readOnly && snapStatus === 'submitted' ? (
+                      <span className="lt-filmstrip-mark">已提交</span>
+                    ) : null}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
         </div>
 
         <aside className="lt-panel" style={{ padding: '0.85rem' }}>

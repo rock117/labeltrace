@@ -209,3 +209,86 @@
   color: var(--lt-fg-muted);
   font-size: 13px;
 }
+
+.lt-filmstrip-wrap {
+  margin-top: 0.75rem;
+  border: 1px solid var(--lt-border);
+  border-radius: var(--lt-radius-lg);
+  background: var(--lt-bg-elevated);
+  overflow: hidden;
+}
+
+.lt-filmstrip-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--lt-border);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.lt-filmstrip {
+  display: flex;
+  gap: 8px;
+  padding: 0.65rem 0.75rem;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+}
+
+.lt-filmstrip-item {
+  position: relative;
+  flex: 0 0 96px;
+  width: 96px;
+  height: 64px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--lt-radius);
+  background: var(--lt-bg-canvas);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.lt-filmstrip-item img,
+.lt-filmstrip-item > div {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.lt-filmstrip-item.active {
+  border-color: var(--lt-accent);
+  box-shadow: 0 0 0 1px var(--lt-accent);
+}
+
+.lt-filmstrip-item:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--lt-accent) 55%, var(--lt-border));
+}
+
+.lt-filmstrip-idx {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, #000 55%, transparent);
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  font-family: var(--lt-font-mono);
+}
+
+.lt-filmstrip-mark {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--lt-success) 85%, #000);
+  color: #fff;
+  font-size: 10px;
+}

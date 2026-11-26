@@ -18,6 +18,19 @@ import { appConfirm, appPrompt } from '../store/dialogStore'
 const EXTRACT_KEY = 'labeltrace.lastExtractJobId'
 const DATASET_KEY = 'labeltrace.datasetId'
 
+type Split = 'train' | 'val' | 'test' | 'unassigned'
+
+const SPLIT_OPTIONS: { value: Split; label: string }[] = [
+  { value: 'unassigned', label: '未分配' },
+  { value: 'train', label: '训练集' },
+  { value: 'val', label: '验证集' },
+  { value: 'test', label: '测试集' },
+]
+
+function splitLabel(s: string): string {
+  return SPLIT_OPTIONS.find((o) => o.value === s)?.label ?? s
+}
+
 async function listAllFolders(projectId: string): Promise<Folder[]> {
   const out: Folder[] = []
   const walk = async (parentId: string | null) => {
@@ -40,6 +53,7 @@ function DatasetsInner() {
   const [libraryFolderId, setLibraryFolderId] = useState('')
   const [libraryImages, setLibraryImages] = useState<Asset[]>([])
   const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [memberPick, setMemberPick] = useState<Set<string>>(new Set())
   const [activeId, setActiveId] = useState<string | null>(
     localStorage.getItem(DATASET_KEY),
   )
@@ -64,7 +78,66 @@ function DatasetsInner() {
     setActive(ds)
     setMembers(mem)
     setSources(src)
+    setMemberPick(new Set())
   }, [])
+
+  const toggleMemberPick = (assetId: string) => {
+    setMemberPick((prev) => {
+      const next = new Set(prev)
+      if (next.has(assetId)) next.delete(assetId)
+      else next.add(assetId)
+      return next
+    })
+  }
+
+  const setMemberSplit = async (assetId: string, split: Split) => {
+    if (!active) return
+    setBusy(true)
+    setError(null)
+    try {
+      const updated = await api<DatasetAsset>(
+        `/v1/datasets/${active.id}/assets/${assetId}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ split }),
+        },
+      )
+      setMembers((prev) =>
+        prev.map((m) => (m.asset_id === assetId ? { ...m, ...updated } : m)),
+      )
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const bulkSetSplit = async (split: Split) => {
+    if (!active || memberPick.size === 0) return
+    setBusy(true)
+    setError(null)
+    try {
+      const ids = [...memberPick]
+      const results = await Promise.all(
+        ids.map((assetId) =>
+          api<DatasetAsset>(`/v1/datasets/${active.id}/assets/${assetId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ split }),
+          }),
+        ),
+      )
+      const byId = new Map(results.map((r) => [r.asset_id, r]))
+      setMembers((prev) =>
+        prev.map((m) => (byId.has(m.asset_id) ? { ...m, ...byId.get(m.asset_id)! } : m)),
+      )
+      setMessage(`已将 ${ids.length} 张设为${splitLabel(split)}`)
+      setMemberPick(new Set())
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -309,7 +382,7 @@ function DatasetsInner() {
       <div className="lt-page-head">
         <div>
           <h1>数据集</h1>
-          <p>从素材库选图入集、抽帧入集或上传新图；再进入标注台。</p>
+          <p>入集 → 标注提交 → 再划分 train/val/test → 发版。</p>
         </div>
       </div>
 
@@ -588,44 +661,165 @@ function DatasetsInner() {
               </div>
 
               <div className="lt-panel" style={{ padding: '1rem' }}>
-                <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem' }}>
-                  成员（{members.length}）
-                </h3>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    marginBottom: '0.75rem',
+                  }}
+                >
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '0.95rem' }}>
+                      成员（{members.length}）· 划分
+                    </h3>
+                    <p
+                      style={{
+                        margin: '0.25rem 0 0',
+                        color: 'var(--lt-fg-muted)',
+                        fontSize: 13,
+                      }}
+                    >
+                      建议标完并提交后再划分 train / val / test；勾选后可批量设置。
+                    </p>
+                  </div>
+                  {members.length > 0 ? (
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        className="lt-btn"
+                        disabled={busy}
+                        onClick={() =>
+                          setMemberPick(
+                            memberPick.size === members.length
+                              ? new Set()
+                              : new Set(members.map((m) => m.asset_id)),
+                          )
+                        }
+                      >
+                        {memberPick.size === members.length ? '取消全选' : '全选'}
+                      </button>
+                      {SPLIT_OPTIONS.filter((o) => o.value !== 'unassigned').map((o) => (
+                        <button
+                          key={o.value}
+                          type="button"
+                          className="lt-btn lt-btn-primary"
+                          disabled={busy || memberPick.size === 0}
+                          onClick={() => void bulkSetSplit(o.value)}
+                        >
+                          设为{o.label}（{memberPick.size}）
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        className="lt-btn"
+                        disabled={busy || memberPick.size === 0}
+                        onClick={() => void bulkSetSplit('unassigned')}
+                      >
+                        设为未分配
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
                 {members.length === 0 ? (
                   <StateBlock title="空数据集" description="入集后可在标注台画框。" />
                 ) : (
                   <div className="lt-thumb-grid">
-                    {members.map((m) => (
-                      <div key={m.asset_id} className="lt-thumb" style={{ position: 'relative' }}>
-                        <Link
-                          to={`/annotate?dataset=${active.id}&asset=${m.asset_id}`}
-                          title={m.filename}
-                          style={{ display: 'block', color: 'inherit' }}
+                    {members.map((m) => {
+                      const on = memberPick.has(m.asset_id)
+                      return (
+                        <div
+                          key={m.asset_id}
+                          className={`lt-thumb${on ? ' selected' : ''}`}
+                          style={{ position: 'relative' }}
                         >
-                          <AuthImage assetId={m.asset_id} alt={m.filename} />
-                          <div className="lt-thumb-meta">
-                            {m.media_kind} · {m.split}
-                          </div>
-                        </Link>
-                        <button
-                          type="button"
-                          className="lt-btn lt-btn-danger"
-                          disabled={busy}
-                          style={{
-                            position: 'absolute',
-                            top: 4,
-                            right: 4,
-                            height: 24,
-                            padding: '0 6px',
-                            fontSize: 11,
-                          }}
-                          title="从数据集移出"
-                          onClick={() => void removeMember(m.asset_id)}
-                        >
-                          移出
-                        </button>
-                      </div>
-                    ))}
+                          <button
+                            type="button"
+                            title="勾选以批量划分"
+                            onClick={() => toggleMemberPick(m.asset_id)}
+                            style={{
+                              position: 'absolute',
+                              left: 4,
+                              top: 4,
+                              zIndex: 2,
+                              width: 22,
+                              height: 22,
+                              borderRadius: 4,
+                              border: '1px solid var(--lt-border)',
+                              background: on ? 'var(--lt-accent)' : 'var(--lt-bg-elevated)',
+                              color: on ? 'var(--lt-accent-fg)' : 'var(--lt-fg)',
+                              cursor: 'pointer',
+                              fontSize: 12,
+                              lineHeight: '20px',
+                              padding: 0,
+                            }}
+                          >
+                            {on ? '✓' : ''}
+                          </button>
+                          <Link
+                            to={`/annotate?dataset=${active.id}&asset=${m.asset_id}`}
+                            title={m.filename}
+                            style={{ display: 'block', color: 'inherit' }}
+                          >
+                            <AuthImage assetId={m.asset_id} alt={m.filename} />
+                            <div className="lt-thumb-meta">
+                              {m.media_kind} · {splitLabel(m.split)}
+                            </div>
+                          </Link>
+                          <select
+                            className="lt-select"
+                            value={
+                              (['train', 'val', 'test', 'unassigned'] as string[]).includes(
+                                m.split,
+                              )
+                                ? m.split
+                                : 'unassigned'
+                            }
+                            disabled={busy}
+                            title="划分"
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) =>
+                              void setMemberSplit(m.asset_id, e.target.value as Split)
+                            }
+                            style={{
+                              position: 'absolute',
+                              left: 4,
+                              bottom: 28,
+                              zIndex: 2,
+                              height: 24,
+                              maxWidth: 'calc(100% - 8px)',
+                              fontSize: 11,
+                              padding: '0 4px',
+                            }}
+                          >
+                            {SPLIT_OPTIONS.map((o) => (
+                              <option key={o.value} value={o.value}>
+                                {o.label}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            className="lt-btn lt-btn-danger"
+                            disabled={busy}
+                            style={{
+                              position: 'absolute',
+                              top: 4,
+                              right: 4,
+                              height: 24,
+                              padding: '0 6px',
+                              fontSize: 11,
+                            }}
+                            title="从数据集移出"
+                            onClick={() => void removeMember(m.asset_id)}
+                          >
+                            移出
+                          </button>
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>
