@@ -1,0 +1,22 @@
+# P0：web + api(+PG 队列消费者) + postgres；不拆独立 worker / 不用 Redis
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: labeltrace
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d labeltrace"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # api / web 镜像在后续任务完善；本地可先用本机 PG（见 backend/.env）
+
+volumes:
+  pgdata:

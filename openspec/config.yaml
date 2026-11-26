@@ -1,0 +1,40 @@
+schema: spec-driven
+
+# 每个 agent 在 propose/apply 时都会读到的项目约束（勿写可从代码推断的细节）
+context: |
+  产品：LabelTrace — 视频优先的 YOLO 标注与数据集平台。
+  实现变更：bootstrap-labeltrace-platform（唯一主 change，直至归档）。
+  技术栈锁定：FastAPI + PostgreSQL + React(TS/Vite) + Konva/react-konva + Zustand；抽帧用 ffmpeg。
+  部署 P0：Docker 为 web + api(+PG 队列消费者) + postgres；不拆独立 worker、不用 Redis；JOB_BACKEND=pg；BlobStore 可扩展。
+  工程规范：禁止静默吞错；结构化日志须含 request_id/job_id 等便于排错（见 design D11）。
+  领域硬约束：
+    - 标注对象是 image/frame，不是整段 video；frame 含 parent_video_id、frame_index、extract_job_id。
+    - 抽帧落盘 → 按时间序人工审查删帧 → 再入集；数据集可混合 frame/upload/import。
+    - 版本不可变；改工作区后发新版；导出绑版本。
+    - shapes 必须带 type；P0 仅 rect；Dataset.enabled_annotation_types 默认 ["rect"]。
+    - storage_backend + hash 型 storage_key；展示路径可中文/空格，禁止当存储路径。
+  UI：产品级（D10）；默认 light、可切 dark；可参考 Roboflow 交互完成度，不抄品牌；禁止未换肤默认后台主题。
+  文档：行为以 openspec/changes/bootstrap-labeltrace-platform/specs/ 为准；操作说明在 docs/guides/；设计在 design.md。
+  实现纪律：按 tasks.md 顺序勾选；每完成一项对照相关 spec Scenario；禁止实现 P0 范围外的标注类型/时间轴 track/独立 worker。
+
+rules:
+  tasks:
+    - 任务须可验证；实现时同步补测试或可观察验收步骤
+  specs:
+    - 需求用 SHALL/MUST；Scenario 用 WHEN/THEN；中文为主、技术名词可英文
+
+operations:
+  apply:
+    guidance:
+      - 开始任一任务前：读取该任务涉及的 specs/*.md 与 design.md 对应章节，再写代码
+      - 优先实现 tasks.md 中下一个未完成的 checkbox；不要跳做后续标注类型或 Redis worker
+      - API/领域变更必须满足 spec Scenario；完成后把 tasks.md 对应项标为 [x]
+      - 长任务只通过 JobService/JobBackend（P0=pg）；文件只通过 BlobStore
+      - 错误不得静默：捕获后必须打日志或写入可观察状态；HTTP/任务失败路径可排错
+      - 日志用项目 logger，带 request_id/job_id 等关键字段（D11）
+      - 前端先 tokens+壳（默认 light/可切 dark），再堆业务页；标注台与抽帧审查须产品级完成度
+      - 不要修改 openspec/changes 下已定稿的需求语义，除非用户明确要求改规划
+      - 中文注释与用户可见文案；代码标识符用英文
+  archive:
+    guidance:
+      - 归档前确认 tasks 已完成且主路径可演示：视频→抽帧→审查→入集→标注→发版→导出
