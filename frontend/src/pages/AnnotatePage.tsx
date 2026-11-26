@@ -228,6 +228,8 @@ function AnnotateInner() {
             {dataset.name} · {index + 1}/{members.length}
             {asset ? ` · ${asset.filename}` : ''}
             {tools.length === 0 ? ' · 无可启用工具' : ' · 检测框'}
+            {' · '}
+            右侧选类别 → 图上拖拽画框 → 保存
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

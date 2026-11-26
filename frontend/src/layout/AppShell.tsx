@@ -1,9 +1,8 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import './shell.css'
 
 const nav = [
-  { to: '/', end: true, label: '项目' },
   { to: '/library', label: '素材库' },
   { to: '/datasets', label: '数据集' },
   { to: '/annotate', label: '标注台' },
@@ -16,6 +15,8 @@ export function AppShell() {
   const userId = useAppStore((s) => s.userId)
   const setUserId = useAppStore((s) => s.setUserId)
   const projectName = useAppStore((s) => s.projectName)
+  const location = useLocation()
+  const onProjects = location.pathname === '/projects'
 
   return (
     <div className="lt-shell">
@@ -27,12 +28,28 @@ export function AppShell() {
             <div className="lt-brand-sub">YOLO 标注工作台</div>
           </div>
         </div>
-        <nav className="lt-nav">
+
+        <div className="lt-project-context">
+          <div className="lt-muted">当前项目</div>
+          <Link
+            to="/projects"
+            className={
+              onProjects ? 'lt-project-switcher active' : 'lt-project-switcher'
+            }
+            title="切换或创建项目"
+          >
+            <span className="lt-project-switcher-name">
+              {projectName || '未选择项目'}
+            </span>
+            <span className="lt-project-switcher-action">切换</span>
+          </Link>
+        </div>
+
+        <nav className="lt-nav" aria-label="项目内工作区">
           {nav.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
-              end={item.end}
               className={({ isActive }) =>
                 isActive ? 'lt-nav-item active' : 'lt-nav-item'
               }
@@ -41,16 +58,24 @@ export function AppShell() {
             </NavLink>
           ))}
         </nav>
-        <div className="lt-sidebar-foot">
-          <div className="lt-muted">
-            当前项目
-            <div className="lt-project-chip">{projectName || '未选择'}</div>
-          </div>
-        </div>
+
+        <div className="lt-sidebar-foot" />
       </aside>
       <div className="lt-main">
         <header className="lt-topbar">
-          <div className="lt-topbar-title">工作区</div>
+          <div className="lt-topbar-title">
+            {projectName ? (
+              <>
+                <span className="lt-topbar-project">{projectName}</span>
+                <span className="lt-topbar-sep" aria-hidden>
+                  /
+                </span>
+                <span>工作区</span>
+              </>
+            ) : (
+              '选择项目'
+            )}
+          </div>
           <div className="lt-topbar-actions">
             <label className="lt-user-field">
               <span>用户</span>

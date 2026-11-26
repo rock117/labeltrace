@@ -10,8 +10,10 @@ alwaysApply: true
 1. **以 OpenSpec 为准**：主变更 `openspec/changes/bootstrap-labeltrace-platform/`。行为契约在 `specs/**/spec.md`，架构在 `design.md`，顺序在 `tasks.md`。
 2. **开工方式**：用户说实现/继续时，走 OpenSpec apply：读 `openspec instructions apply --change bootstrap-labeltrace-platform --json`，按未完成任务推进，完成后勾选 `- [x]`。
 3. **写代码前**：打开本任务相关的 spec Scenario + design 对应节；不要凭对话记忆发明与 spec 冲突的行为。
-4. **范围**：只做 tasks/P0；不做未启用的标注类型、视频时间轴 track、独立 Redis worker。`JOB_BACKEND=pg`。
-5. **优先级**：主体路径（标注/发版/血缘/UI）优先；**YOLO 导入与 zip 导出延后**，不阻塞主体验收。
-6. **硬约束摘要**：frame/image 可标、video 不可直接标框；抽帧落盘→时间序审查→入集；版本不可变；JobBackend/BlobStore 抽象；UI 产品级、默认 light 可切 dark。
-7. **工程规范**：禁止静默吞错；结构化日志（request_id/job_id）须能快速排错（design D11）。
-8. **文档**：用户可见流程见 `docs/guides/`；勿把操作手册写进 spec。
+4. **禁止静默创建用户域对象**：不得为凑外键/必填字段在前后端偷偷创建 Folder、Dataset、Tag、Project 等。缺则空态 + 显式创建/选择入口；用户须能完成 spec 里的 WHEN。自检：「用户能否在 UI 上完成该 Scenario？」不能则功能未完成，禁止用后台魔法顶上。
+5. **范围**：只做 tasks/P0；不做未启用的标注类型、视频时间轴 track、独立 Redis worker。`JOB_BACKEND=pg`。
+6. **优先级**：主体路径（标注/发版/血缘/UI）优先；**YOLO 导入与 zip 导出延后**，不阻塞主体验收。
+7. **硬约束摘要**：frame/image 可标、video 不可直接标框；抽帧落盘→时间序审查→入集；版本不可变；JobBackend/BlobStore 抽象；UI 产品级、默认 light 可切 dark。
+8. **工程规范**：禁止静默吞错；结构化日志（request_id/job_id）须能快速排错（design D11）。
+9. **文档**：用户可见流程见 `docs/guides/`；勿把操作手册写进 spec。
+10. **验收口径**：后端 API 有 ≠ 功能完成；P0 须有对应产品 UI（或 tasks 明确延后）。向用户汇报进度时区分 API / UI / 未做，禁止把半成品说成「已实现」。

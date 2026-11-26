@@ -17,18 +17,28 @@ import { RequireProject } from '../components/RequireProject'
 const EXTRACT_KEY = 'labeltrace.lastExtractJobId'
 const DATASET_KEY = 'labeltrace.datasetId'
 
-async function ensureRootFolder(projectId: string): Promise<Folder> {
-  const roots = await api<Folder[]>(`/v1/projects/${projectId}/folders`)
-  if (roots.length > 0) return roots[0]
-  return api<Folder>(`/v1/projects/${projectId}/folders`, {
-    method: 'POST',
-    body: JSON.stringify({ name: '素材' }),
-  })
+async function listAllFolders(projectId: string): Promise<Folder[]> {
+  const out: Folder[] = []
+  const walk = async (parentId: string | null) => {
+    const q = parentId ? `?parent_id=${parentId}` : ''
+    const kids = await api<Folder[]>(`/v1/projects/${projectId}/folders${q}`)
+    for (const f of kids) {
+      out.push(f)
+      await walk(f.id)
+    }
+  }
+  await walk(null)
+  return out
 }
 
 function DatasetsInner() {
   const projectId = useAppStore((s) => s.projectId)!
   const [datasets, setDatasets] = useState<Dataset[]>([])
+  const [folders, setFolders] = useState<Folder[]>([])
+  const [uploadFolderId, setUploadFolderId] = useState('')
+  const [libraryFolderId, setLibraryFolderId] = useState('')
+  const [libraryImages, setLibraryImages] = useState<Asset[]>([])
+  const [picked, setPicked] = useState<Set<string>>(new Set())
   const [activeId, setActiveId] = useState<string | null>(
     localStorage.getItem(DATASET_KEY),
   )
@@ -59,8 +69,19 @@ function DatasetsInner() {
     setLoading(true)
     setError(null)
     try {
-      const list = await api<Dataset[]>(`/v1/projects/${projectId}/datasets`)
+      const [list, folderList] = await Promise.all([
+        api<Dataset[]>(`/v1/projects/${projectId}/datasets`),
+        listAllFolders(projectId),
+      ])
       setDatasets(list)
+      setFolders(folderList)
+      const firstFolder = folderList[0]?.id || ''
+      setUploadFolderId((prev) =>
+        prev && folderList.some((f) => f.id === prev) ? prev : firstFolder,
+      )
+      setLibraryFolderId((prev) =>
+        prev && folderList.some((f) => f.id === prev) ? prev : firstFolder,
+      )
       const prefer =
         (activeId && list.find((d) => d.id === activeId)?.id) ||
         list[0]?.id ||
@@ -140,15 +161,74 @@ function DatasetsInner() {
     }
   }
 
-  const uploadImage = async (file: File) => {
+  const loadLibraryImages = useCallback(async (folderId: string) => {
+    if (!folderId) {
+      setLibraryImages([])
+      setPicked(new Set())
+      return
+    }
+    const list = await api<Asset[]>(`/v1/folders/${folderId}/assets`)
+    setLibraryImages(list.filter((a) => a.media_kind === 'image'))
+    setPicked(new Set())
+  }, [])
+
+  useEffect(() => {
+    if (!libraryFolderId) {
+      setLibraryImages([])
+      return
+    }
+    void loadLibraryImages(libraryFolderId).catch((e) =>
+      setError(formatError(e)),
+    )
+  }, [libraryFolderId, loadLibraryImages])
+
+  const togglePick = (id: string) => {
+    setPicked((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const addFromLibrary = async () => {
     if (!active) return
+    if (picked.size === 0) {
+      setError('请先勾选素材库中的图片')
+      return
+    }
     setBusy(true)
     setError(null)
     try {
-      const folder = await ensureRootFolder(projectId)
+      const added = await api<DatasetAsset[]>(`/v1/datasets/${active.id}/assets`, {
+        method: 'POST',
+        body: JSON.stringify({
+          asset_ids: [...picked],
+          split: 'unassigned',
+        }),
+      })
+      setPicked(new Set())
+      await selectDataset(active.id)
+      setMessage(`已从素材库加入 ${added.length} 张`)
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const uploadImage = async (file: File) => {
+    if (!active) return
+    if (!uploadFolderId) {
+      setError('请先在素材库创建目录，并在此选择上传目标目录')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
       const fd = new FormData()
       fd.append('file', file)
-      const asset = await api<Asset>(`/v1/folders/${folder.id}/assets`, {
+      const asset = await api<Asset>(`/v1/folders/${uploadFolderId}/assets`, {
         method: 'POST',
         body: fd,
       })
@@ -176,7 +256,7 @@ function DatasetsInner() {
       <div className="lt-page-head">
         <div>
           <h1>数据集</h1>
-          <p>将来源摘要可视化：抽帧入集、上传图；再进入标注台。</p>
+          <p>从素材库选图入集、抽帧入集或上传新图；再进入标注台。</p>
         </div>
       </div>
 
@@ -263,7 +343,7 @@ function DatasetsInner() {
                       {active.enabled_annotation_types.join(', ')}
                     </p>
                   </div>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                     <button
                       type="button"
                       className="lt-btn lt-btn-primary"
@@ -272,20 +352,41 @@ function DatasetsInner() {
                     >
                       加入审查剩余帧
                     </button>
-                    <label className="lt-btn" style={{ cursor: 'pointer' }}>
-                      上传图片入集
-                      <input
-                        type="file"
-                        accept="image/*"
-                        hidden
-                        disabled={busy}
-                        onChange={(e) => {
-                          const f = e.target.files?.[0]
-                          if (f) void uploadImage(f)
-                          e.target.value = ''
-                        }}
-                      />
-                    </label>
+                    {folders.length === 0 ? (
+                      <Link to="/library" className="lt-btn">
+                        先去素材库建目录
+                      </Link>
+                    ) : (
+                      <>
+                        <select
+                          className="lt-select"
+                          value={uploadFolderId}
+                          onChange={(e) => setUploadFolderId(e.target.value)}
+                          title="上传目标目录"
+                          style={{ maxWidth: 180 }}
+                        >
+                          {folders.map((f) => (
+                            <option key={f.id} value={f.id}>
+                              {f.path}
+                            </option>
+                          ))}
+                        </select>
+                        <label className="lt-btn" style={{ cursor: 'pointer' }}>
+                          上传图片入集
+                          <input
+                            type="file"
+                            accept="image/*"
+                            hidden
+                            disabled={busy || !uploadFolderId}
+                            onChange={(e) => {
+                              const f = e.target.files?.[0]
+                              if (f) void uploadImage(f)
+                              e.target.value = ''
+                            }}
+                          />
+                        </label>
+                      </>
+                    )}
                     <Link
                       to={`/annotate?dataset=${active.id}`}
                       className="lt-btn"
@@ -303,11 +404,90 @@ function DatasetsInner() {
               </div>
 
               <div className="lt-panel" style={{ padding: '1rem', marginBottom: '1rem' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    marginBottom: '0.75rem',
+                  }}
+                >
+                  <h3 style={{ margin: 0, fontSize: '0.95rem' }}>从素材库加入</h3>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {folders.length === 0 ? (
+                      <Link to="/library" className="lt-btn">
+                        先去素材库建目录并上传
+                      </Link>
+                    ) : (
+                      <>
+                        <select
+                          className="lt-select"
+                          value={libraryFolderId}
+                          onChange={(e) => setLibraryFolderId(e.target.value)}
+                          style={{ maxWidth: 200 }}
+                        >
+                          {folders.map((f) => (
+                            <option key={f.id} value={f.id}>
+                              {f.path}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className="lt-btn lt-btn-primary"
+                          disabled={busy || picked.size === 0}
+                          onClick={() => void addFromLibrary()}
+                        >
+                          加入所选（{picked.size}）
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                {folders.length > 0 && libraryImages.length === 0 ? (
+                  <StateBlock
+                    title="该目录没有图片"
+                    description="到素材库上传图片，或换一个目录；视频请抽帧后再入集。"
+                  />
+                ) : null}
+                {libraryImages.length > 0 ? (
+                  <div className="lt-thumb-grid">
+                    {libraryImages.map((img) => {
+                      const already = members.some((m) => m.asset_id === img.id)
+                      const on = picked.has(img.id)
+                      return (
+                        <button
+                          key={img.id}
+                          type="button"
+                          className={`lt-thumb${on ? ' selected' : ''}`}
+                          disabled={already}
+                          title={
+                            already
+                              ? '已在数据集中'
+                              : img.filename
+                          }
+                          onClick={() => togglePick(img.id)}
+                          style={{ opacity: already ? 0.45 : 1 }}
+                        >
+                          <AuthImage assetId={img.id} alt={img.filename} />
+                          <div className="lt-thumb-meta">
+                            {already ? '已入集' : img.filename}
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="lt-panel" style={{ padding: '1rem', marginBottom: '1rem' }}>
                 <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem' }}>
                   来源摘要
                 </h3>
                 {sources.length === 0 ? (
-                  <StateBlock title="尚无成员" description="从抽帧审查入集，或上传图片。" />
+                  <StateBlock title="尚无成员" description="上方从素材库勾选图片加入，或抽帧入集 / 上传新图。" />
                 ) : (
                   <div style={{ display: 'grid', gap: 8 }}>
                     {sources.map((s, i) => (

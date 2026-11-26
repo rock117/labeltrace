@@ -1,0 +1,12 @@
+---
+description: 禁止静默创建 Folder/Dataset 等用户域对象来凑必填字段
+alwaysApply: true
+---
+
+# 禁止静默创建域对象
+
+为满足 `folder_id` 等外键/必填而 `ensureRootFolder`、隐式建数据集、隐式建标签等，一律禁止。
+
+- Spec 要求「上传到目标目录」→ UI 必须先建/选目录，再上传。
+- 缺资源时：空态说明 + 创建入口；或 4xx + 可读错误。不要在请求路径里偷偷 INSERT。
+- 自检：打开相关 `specs/**/spec.md` Scenario，用户能否在界面完成 WHEN？不能 = 未完成。

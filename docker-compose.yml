@@ -1,7 +1,9 @@
 # P0：web + api(+PG 队列消费者) + postgres；不拆独立 worker / 不用 Redis
+# 基础镜像：优先本地（pull_policy: missing）；缺失时先跑 scripts/ensure-base-images.*
 services:
   postgres:
-    image: postgres:17
+    image: postgres:16-alpine
+    pull_policy: missing
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -16,7 +18,50 @@ services:
       timeout: 5s
       retries: 10
 
-  # api / web 镜像在后续任务完善；本地可先用本机 PG（见 backend/.env）
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      pull: false
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/labeltrace
+      BLOB_BACKEND: local
+      BLOB_LOCAL_ROOT: /data/blobs
+      JOB_BACKEND: pg
+      JOB_POLL_INTERVAL_SEC: "0.5"
+      JOB_LEASE_SEC: "300"
+      LOG_LEVEL: INFO
+    volumes:
+      - blobs:/data/blobs
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      pull: false
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
 
 volumes:
   pgdata:
+  blobs:

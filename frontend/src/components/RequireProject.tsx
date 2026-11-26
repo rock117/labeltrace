@@ -9,10 +9,10 @@ export function RequireProject({ children }: { children: ReactNode }) {
     return (
       <StateBlock
         title="未选择项目"
-        description="请先在「项目」页创建或选择一个项目，再使用素材库、数据集与标注台。"
+        description="请先选择或创建一个项目，再使用素材库、数据集与标注台。"
         action={
-          <Link to="/" className="lt-btn lt-btn-primary">
-            前往项目
+          <Link to="/projects" className="lt-btn lt-btn-primary">
+            选择项目
           </Link>
         }
       />

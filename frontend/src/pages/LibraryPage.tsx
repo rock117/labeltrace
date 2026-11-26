@@ -9,18 +9,12 @@ import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
 
 const EXTRACT_KEY = 'labeltrace.lastExtractJobId'
-
-async function ensureRootFolder(projectId: string): Promise<Folder> {
-  const roots = await api<Folder[]>(`/v1/projects/${projectId}/folders`)
-  if (roots.length > 0) return roots[0]
-  return api<Folder>(`/v1/projects/${projectId}/folders`, {
-    method: 'POST',
-    body: JSON.stringify({ name: '素材' }),
-  })
-}
+const FOLDER_KEY = 'labeltrace.folderId'
 
 function LibraryInner() {
   const projectId = useAppStore((s) => s.projectId)!
+  const [trail, setTrail] = useState<Folder[]>([])
+  const [childFolders, setChildFolders] = useState<Folder[]>([])
   const [folder, setFolder] = useState<Folder | null>(null)
   const [assets, setAssets] = useState<Asset[]>([])
   const [selectedVideo, setSelectedVideo] = useState<Asset | null>(null)
@@ -28,51 +22,133 @@ function LibraryInner() {
   const [frames, setFrames] = useState<FrameCandidate[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [stride, setStride] = useState(30)
+  const [newFolderName, setNewFolderName] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+
+  const currentParentId = folder?.id ?? null
+
+  const loadChildren = useCallback(
+    async (parentId: string | null) => {
+      const q = parentId ? `?parent_id=${parentId}` : ''
+      return api<Folder[]>(`/v1/projects/${projectId}/folders${q}`)
+    },
+    [projectId],
+  )
 
   const loadAssets = useCallback(async (folderId: string) => {
     const list = await api<Asset[]>(`/v1/folders/${folderId}/assets`)
     setAssets(list)
   }, [])
 
-  const bootstrap = useCallback(async () => {
-    setLoading(true)
+  const enterFolder = useCallback(
+    async (next: Folder | null, nextTrail: Folder[]) => {
+      setFolder(next)
+      setTrail(nextTrail)
+      setSelectedVideo(null)
+      setAssets([])
+      if (next) {
+        localStorage.setItem(FOLDER_KEY, next.id)
+        const [kids] = await Promise.all([
+          loadChildren(next.id),
+          loadAssets(next.id),
+        ])
+        setChildFolders(kids)
+      } else {
+        localStorage.removeItem(FOLDER_KEY)
+        setChildFolders(await loadChildren(null))
+      }
+    },
+    [loadAssets, loadChildren],
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        const roots = await loadChildren(null)
+        if (cancelled) return
+        setChildFolders(roots)
+        setFolder(null)
+        setTrail([])
+        setAssets([])
+
+        const savedId = localStorage.getItem(FOLDER_KEY)
+        if (savedId) {
+          try {
+            const f = await api<Folder>(`/v1/folders/${savedId}`)
+            if (!cancelled && f.project_id === projectId) {
+              await enterFolder(f, [f])
+            } else if (f.project_id !== projectId) {
+              localStorage.removeItem(FOLDER_KEY)
+            }
+          } catch {
+            localStorage.removeItem(FOLDER_KEY)
+          }
+        }
+
+        const lastId = localStorage.getItem(EXTRACT_KEY)
+        if (lastId) {
+          try {
+            const job = await api<ExtractJob>(`/v1/extract-jobs/${lastId}`)
+            if (!cancelled && job.project_id === projectId) {
+              setExtractJob(job)
+              if (job.status === 'succeeded') {
+                const fr = await api<FrameCandidate[]>(
+                  `/v1/extract-jobs/${lastId}/frames`,
+                )
+                if (!cancelled) setFrames(fr)
+              }
+            }
+          } catch {
+            localStorage.removeItem(EXTRACT_KEY)
+          }
+        }
+      } catch (e) {
+        if (!cancelled) setError(formatError(e))
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // 仅项目切换时重载；enterFolder 稳定用于恢复已选目录
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  const createFolder = async () => {
+    const name = newFolderName.trim()
+    if (!name) return
+    setBusy(true)
     setError(null)
     try {
-      const f = await ensureRootFolder(projectId)
-      setFolder(f)
-      await loadAssets(f.id)
-      const lastId = localStorage.getItem(EXTRACT_KEY)
-      if (lastId) {
-        try {
-          const job = await api<ExtractJob>(`/v1/extract-jobs/${lastId}`)
-          if (job.project_id === projectId) {
-            setExtractJob(job)
-            if (job.status === 'succeeded') {
-              const fr = await api<FrameCandidate[]>(`/v1/extract-jobs/${lastId}/frames`)
-              setFrames(fr)
-            }
-          }
-        } catch {
-          localStorage.removeItem(EXTRACT_KEY)
-        }
-      }
+      const created = await api<Folder>(`/v1/projects/${projectId}/folders`, {
+        method: 'POST',
+        body: JSON.stringify({
+          name,
+          parent_id: currentParentId,
+        }),
+      })
+      setNewFolderName('')
+      setMessage(`已创建目录：${created.path}`)
+      await enterFolder(created, [...trail, created])
     } catch (e) {
       setError(formatError(e))
     } finally {
-      setLoading(false)
+      setBusy(false)
     }
-  }, [projectId, loadAssets])
-
-  useEffect(() => {
-    void bootstrap()
-  }, [bootstrap])
+  }
 
   const upload = async (file: File) => {
-    if (!folder) return
+    if (!folder) {
+      setError('请先创建或选择一个目录，再上传')
+      return
+    }
     setBusy(true)
     setError(null)
     setMessage(null)
@@ -193,15 +269,22 @@ function LibraryInner() {
       <div className="lt-page-head">
         <div>
           <h1>素材库</h1>
-          <p>上传视频 → 抽帧 → 按时间审查删帧，再加入数据集。</p>
+          <p>先建/选目录，再上传视频 → 抽帧 → 按时间审查删帧，再加入数据集。</p>
         </div>
-        <label className="lt-btn lt-btn-primary" style={{ cursor: 'pointer' }}>
-          上传文件
+        <label
+          className="lt-btn lt-btn-primary"
+          style={{
+            cursor: folder ? 'pointer' : 'not-allowed',
+            opacity: folder ? 1 : 0.5,
+          }}
+          title={folder ? '上传到当前目录' : '请先选择目录'}
+        >
+          上传到当前目录
           <input
             type="file"
             accept="video/*,image/*"
             hidden
-            disabled={busy}
+            disabled={busy || !folder}
             onChange={(e) => {
               const f = e.target.files?.[0]
               if (f) void upload(f)
@@ -219,6 +302,57 @@ function LibraryInner() {
       ) : null}
 
       <div
+        className="lt-panel"
+        style={{
+          padding: '0.85rem',
+          marginBottom: '1rem',
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 8,
+          alignItems: 'center',
+        }}
+      >
+        <nav style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+          <button
+            type="button"
+            className="lt-btn lt-btn-ghost"
+            onClick={() => void enterFolder(null, [])}
+          >
+            根目录
+          </button>
+          {trail.map((f, i) => (
+            <span key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span className="lt-muted">/</span>
+              <button
+                type="button"
+                className="lt-btn lt-btn-ghost"
+                onClick={() => void enterFolder(f, trail.slice(0, i + 1))}
+              >
+                {f.name}
+              </button>
+            </span>
+          ))}
+        </nav>
+        <span style={{ flex: 1 }} />
+        <input
+          className="lt-input"
+          placeholder={folder ? '在此目录下新建子目录' : '新建根目录名称'}
+          value={newFolderName}
+          onChange={(e) => setNewFolderName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && void createFolder()}
+          style={{ maxWidth: 220 }}
+        />
+        <button
+          type="button"
+          className="lt-btn"
+          disabled={busy || !newFolderName.trim()}
+          onClick={() => void createFolder()}
+        >
+          新建目录
+        </button>
+      </div>
+
+      <div
         style={{
           display: 'grid',
           gridTemplateColumns: 'minmax(220px, 280px) 1fr',
@@ -227,80 +361,124 @@ function LibraryInner() {
         }}
       >
         <section className="lt-panel" style={{ padding: '0.85rem' }}>
-          <h2 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem' }}>视频</h2>
-          {videos.length === 0 ? (
-            <StateBlock title="暂无视频" description="上传 mp4 / mov 等开始抽帧。" />
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {videos.map((v) => (
+          <h2 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem' }}>
+            {folder ? '子目录与素材' : '目录'}
+          </h2>
+
+          {childFolders.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+              {childFolders.map((f) => (
                 <button
-                  key={v.id}
+                  key={f.id}
                   type="button"
                   className="lt-btn"
-                  style={{
-                    justifyContent: 'flex-start',
-                    height: 'auto',
-                    padding: '0.55rem 0.65rem',
-                    background:
-                      selectedVideo?.id === v.id
-                        ? 'var(--lt-accent-soft)'
-                        : undefined,
-                  }}
-                  onClick={() => setSelectedVideo(v)}
+                  style={{ justifyContent: 'flex-start', height: 'auto', padding: '0.55rem 0.65rem' }}
+                  onClick={() => void enterFolder(f, [...trail, f])}
                 >
                   <span style={{ textAlign: 'left' }}>
-                    <div style={{ fontWeight: 600 }}>{v.filename}</div>
+                    <div style={{ fontWeight: 600 }}>{f.name}</div>
                     <div className="mono" style={{ fontSize: 11, color: 'var(--lt-fg-subtle)' }}>
-                      {v.duration_ms != null
-                        ? `${(v.duration_ms / 1000).toFixed(1)}s`
-                        : '—'}
-                      {v.fps != null ? ` · ${v.fps.toFixed(1)} fps` : ''}
+                      {f.path}
                     </div>
                   </span>
                 </button>
               ))}
             </div>
-          )}
-
-          {selectedVideo ? (
-            <div style={{ marginTop: '1rem', display: 'grid', gap: 8 }}>
-              <label style={{ fontSize: 12, color: 'var(--lt-fg-muted)' }}>
-                抽帧步长（帧）
-                <input
-                  className="lt-input"
-                  type="number"
-                  min={1}
-                  value={stride}
-                  onChange={(e) => setStride(Number(e.target.value) || 1)}
-                  style={{ marginTop: 4, maxWidth: '100%' }}
-                />
-              </label>
-              <button
-                type="button"
-                className="lt-btn lt-btn-primary"
-                disabled={busy}
-                onClick={() => void startExtract()}
-              >
-                开始抽帧
-              </button>
-            </div>
           ) : null}
 
-          {images.length > 0 ? (
+          {!folder ? (
+            <StateBlock
+              title={childFolders.length === 0 ? '还没有目录' : '请选择目录'}
+              description={
+                childFolders.length === 0
+                  ? '按规格须先创建目录，再上传素材到该目录。'
+                  : '点左侧/上方目录进入后才能上传。'
+              }
+            />
+          ) : (
             <>
-              <h2 style={{ margin: '1.25rem 0 0.5rem', fontSize: '0.95rem' }}>
-                上传图片
-              </h2>
-              <div className="lt-thumb-grid">
-                {images.map((img) => (
-                  <div key={img.id} className="lt-thumb">
-                    <AuthImage assetId={img.id} alt={img.filename} />
-                    <div className="lt-thumb-meta">{img.filename}</div>
+              <h2 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem' }}>视频</h2>
+              {videos.length === 0 ? (
+                <StateBlock
+                  title="暂无视频"
+                  description="上传 mp4 / mov 等到当前目录后开始抽帧。"
+                />
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {videos.map((v) => (
+                    <button
+                      key={v.id}
+                      type="button"
+                      className="lt-btn"
+                      style={{
+                        justifyContent: 'flex-start',
+                        height: 'auto',
+                        padding: '0.55rem 0.65rem',
+                        background:
+                          selectedVideo?.id === v.id
+                            ? 'var(--lt-accent-soft)'
+                            : undefined,
+                      }}
+                      onClick={() => setSelectedVideo(v)}
+                    >
+                      <span style={{ textAlign: 'left' }}>
+                        <div style={{ fontWeight: 600 }}>{v.filename}</div>
+                        <div
+                          className="mono"
+                          style={{ fontSize: 11, color: 'var(--lt-fg-subtle)' }}
+                        >
+                          {v.duration_ms != null
+                            ? `${(v.duration_ms / 1000).toFixed(1)}s`
+                            : '—'}
+                          {v.fps != null ? ` · ${v.fps.toFixed(1)} fps` : ''}
+                        </div>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {selectedVideo ? (
+                <div style={{ marginTop: '1rem', display: 'grid', gap: 8 }}>
+                  <label style={{ fontSize: 12, color: 'var(--lt-fg-muted)' }}>
+                    抽帧步长（帧）
+                    <input
+                      className="lt-input"
+                      type="number"
+                      min={1}
+                      value={stride}
+                      onChange={(e) => setStride(Number(e.target.value) || 1)}
+                      style={{ marginTop: 4, maxWidth: '100%' }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="lt-btn lt-btn-primary"
+                    disabled={busy}
+                    onClick={() => void startExtract()}
+                  >
+                    开始抽帧
+                  </button>
+                </div>
+              ) : null}
+
+              {images.length > 0 ? (
+                <>
+                  <h2 style={{ margin: '1.25rem 0 0.5rem', fontSize: '0.95rem' }}>
+                    上传图片
+                  </h2>
+                  <div className="lt-thumb-grid">
+                    {images.map((img) => (
+                      <div key={img.id} className="lt-thumb">
+                        <AuthImage assetId={img.id} alt={img.filename} />
+                        <div className="lt-thumb-meta">{img.filename}</div>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </>
+              ) : null}
             </>
-          ) : null}
+          )}
         </section>
 
         <section className="lt-panel" style={{ padding: '0.85rem' }}>
@@ -316,7 +494,13 @@ function LibraryInner() {
           >
             <div>
               <h2 style={{ margin: 0, fontSize: '0.95rem' }}>候选帧审查</h2>
-              <p style={{ margin: '0.2rem 0 0', color: 'var(--lt-fg-muted)', fontSize: 13 }}>
+              <p
+                style={{
+                  margin: '0.2rem 0 0',
+                  color: 'var(--lt-fg-muted)',
+                  fontSize: 13,
+                }}
+              >
                 {extractJob
                   ? `任务 ${extractJob.status} · 已选 ${selected.size} / ${frames.length}`
                   : '抽帧完成后在此按时间顺序审查'}

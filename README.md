@@ -15,31 +15,21 @@ YOLO 标注与数据集平台。面向甲方以**拍摄视频**为主的交付�
 
 ## 快速开始
 
-详细步骤（环境变量、迁移、Docker、排错）见：
-
-**→ [docs/guides/运行与部署.md](docs/guides/运行与部署.md)**
-
-最短路径：
+**推荐：一键 Docker Compose**
 
 ```bash
-# 1) 数据库
-docker compose up -d postgres
-
-# 2) API（另开终端）
-cd backend
-python -m venv .venv
-# Windows: .\.venv\Scripts\pip install -r requirements.txt
-# Windows: copy .env.example .env   # 按需改 DATABASE_URL
-.\.venv\Scripts\alembic upgrade head
-.\.venv\Scripts\python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
-
-# 3) 前端
-cd frontend
-npm install
-npm run dev
+# 优先本地镜像；缺失则经国内镜像站拉取并打成官方短名
+powershell -File scripts/ensure-base-images.ps1   # Windows
+# bash scripts/ensure-base-images.sh              # Linux / macOS
+docker compose up -d --build
 ```
 
-打开 `http://127.0.0.1:5173`；API `http://127.0.0.1:8001/docs`。
+- Web：http://127.0.0.1:8080  
+- API 文档：http://127.0.0.1:8001/docs  
+
+详细说明（环境变量、热重载开发、排错）见：
+
+**→ [docs/guides/运行与部署.md](docs/guides/运行与部署.md)**
 
 ## 主路径（视频优先）
 
@@ -58,14 +48,14 @@ npm run dev
 - **版本**：工作区可改；已发版只读；迭代 = 追加帧/改标后发新版。  
 - **标注类型**：P0 为 `rect`；架构可扩展其它类型。
 
-## 部署拆分（Docker，P0）
+## 部署拆分（Docker Compose，P0）
 
 | 容器 | 作用 |
 |------|------|
-| **web** | React 静态 + 反代 API（镜像待完善） |
-| **api** | FastAPI + **PG 队列消费者**抽帧（含 ffmpeg） |
-| **postgres** | 元数据与任务队列（`jobs`）；Compose 已可起 |
-| **minio**（可选） | 对象存储；也可用本地 volume |
+| **web** | React 静态 + nginx 反代 `/api`（`:8080`） |
+| **api** | FastAPI + **PG 队列消费者**抽帧（含 ffmpeg，`:8001`） |
+| **postgres** | 元数据与任务队列（`jobs`） |
+| **blobs** volume | 本地对象存储挂载 |
 
 错误处理与日志规范见 design **D11**；任务说明见 `docs/jobs.md`。
 

@@ -82,9 +82,13 @@ export function AnnotatorCanvas({
   const toImage = (sx: number, sy: number) => [sx / scale, sy / scale] as const
 
   const onMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
-    if (e.target !== e.target.getStage()) return
+    const stage = e.target.getStage()
+    if (!stage) return
+    // 图铺满 Stage 时点击落在 Image 上；仅在点到已有框/变换器时不新画
+    const kind = e.target.getClassName()
+    if (kind === 'Rect' || kind === 'Transformer') return
     setSelected(null)
-    const pos = e.target.getStage()?.getPointerPosition()
+    const pos = stage.getPointerPosition()
     if (!pos) return
     setDrawing({ x: pos.x, y: pos.y })
     setDraft([pos.x, pos.y, pos.x, pos.y])
@@ -144,15 +148,36 @@ export function AnnotatorCanvas({
         border: '1px solid var(--lt-border)',
         overflow: 'auto',
         minHeight: 320,
+        position: 'relative',
       }}
     >
+      {shapes.length === 0 && !drawing ? (
+        <div
+          style={{
+            position: 'absolute',
+            left: 12,
+            top: 12,
+            zIndex: 2,
+            pointerEvents: 'none',
+            padding: '0.35rem 0.6rem',
+            borderRadius: 'var(--lt-radius)',
+            background: 'color-mix(in srgb, var(--lt-bg-elevated) 92%, transparent)',
+            border: '1px solid var(--lt-border)',
+            color: 'var(--lt-fg-muted)',
+            fontSize: 13,
+          }}
+        >
+          在图上按住拖拽即可画检测框
+        </div>
+      ) : null}
       <Stage
         width={stageSize.w}
         height={stageSize.h}
         onMouseDown={onMouseDown}
         onMouseMove={onMouseMove}
         onMouseUp={onMouseUp}
-        style={{ margin: '0 auto', display: 'block' }}
+        onMouseLeave={onMouseUp}
+        style={{ margin: '0 auto', display: 'block', cursor: 'crosshair' }}
       >
         <Layer>
           {img ? (

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import type { Project } from '../lib/types'
 import { useAppStore } from '../store/appStore'
@@ -6,6 +7,7 @@ import { formatError } from '../hooks/useAsync'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 
 export function ProjectsPage() {
+  const navigate = useNavigate()
   const setProject = useAppStore((s) => s.setProject)
   const projectId = useAppStore((s) => s.projectId)
   const [items, setItems] = useState<Project[]>([])
@@ -13,6 +15,11 @@ export function ProjectsPage() {
   const [error, setError] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
+
+  const enterProject = (id: string, projectName: string) => {
+    setProject(id, projectName)
+    navigate('/library')
+  }
 
   const reload = async () => {
     setLoading(true)
@@ -41,8 +48,7 @@ export function ProjectsPage() {
         body: JSON.stringify({ name: name.trim() }),
       })
       setName('')
-      setProject(p.id, p.name)
-      await reload()
+      enterProject(p.id, p.name)
     } catch (e) {
       setError(formatError(e))
     } finally {
@@ -54,8 +60,8 @@ export function ProjectsPage() {
     <div>
       <div className="lt-page-head">
         <div>
-          <h1>项目</h1>
-          <p>选择工作项目；后续素材与数据集均归属当前项目。</p>
+          <h1>选择项目</h1>
+          <p>项目是工作边界；素材库、数据集与标注都在所选项目内。</p>
         </div>
       </div>
 
@@ -111,13 +117,21 @@ export function ProjectsPage() {
                 borderColor: active ? 'var(--lt-accent)' : undefined,
                 background: active ? 'var(--lt-accent-soft)' : undefined,
               }}
-              onClick={() => setProject(p.id, p.name)}
+              onClick={() => enterProject(p.id, p.name)}
             >
               <div style={{ fontWeight: 600 }}>{p.name}</div>
               <div className="mono" style={{ color: 'var(--lt-fg-subtle)', fontSize: 12 }}>
                 {p.id}
               </div>
-              {active ? <span className="lt-badge" style={{ marginTop: 6 }}>当前</span> : null}
+              {active ? (
+                <span className="lt-badge" style={{ marginTop: 6 }}>
+                  当前 · 进入素材库
+                </span>
+              ) : (
+                <span className="lt-muted" style={{ marginTop: 6, display: 'block' }}>
+                  进入此项目
+                </span>
+              )}
             </button>
           )
         })}
