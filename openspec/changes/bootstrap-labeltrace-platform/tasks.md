@@ -23,32 +23,32 @@
 
 - [x] 3.1 实现 Folder 树 CRUD（同级重名 409），并验证嵌套创建与路径/列表正确
 
-- [ ] 3.2 Asset 支持 `media_kind`（image/video/frame）；实现图片上传（`image`）与 content 读取（RFC 5987 文件名），并验证中文路径展示与 hash 型 storage_key
-- [ ] 3.3 实现内容哈希去重与移动、目录列表过滤、引用硬删 409（同前约定）
+- [x] 3.2 Asset 支持 `media_kind`（image/video/frame）；实现图片上传（`image`）与 content 读取（RFC 5987 文件名），并验证中文路径展示与 hash 型 storage_key
+- [x] 3.3 实现内容哈希去重与移动、目录列表过滤、引用硬删 409（同前约定）
 
 ## 3b. 视频入库与抽帧（video-ingest）— 主路径
 
-- [ ] 3b.1 集成 ffmpeg（或等价）于 API/Worker，并确认能从样例视频导出 jpg 帧
-- [ ] 3b.2 实现视频上传（`media_kind=video`）+ 元数据（时长/fps/分辨率），并验证目录可见与去重
-- [ ] 3b.3 实现 `FrameExtractJob`（mode/stride 或 interval）与抽帧执行，生成带 `extract_job_id` 的 frame，并验证任务参数可回读
-- [ ] 3b.4 实现按抽帧任务浏览候选帧（**默认按 frame_index/时间升序**，展示时间位置）+ **批量删除**未入集帧，并验证排序与 `discarded_count`
-- [ ] 3b.5 验证已入集 frame 硬删返回 409；移出数据集后再删成功
-- [ ] 3b.6 实现「将审查后剩余帧加入数据集」，并验证可与上传 image 并存
+- [x] 3b.1 集成 ffmpeg（或等价）于 API/Worker，并确认能从样例视频导出 jpg 帧
+- [x] 3b.2 实现视频上传（`media_kind=video`）+ 元数据（时长/fps/分辨率），并验证目录可见与去重
+- [x] 3b.3 实现 `FrameExtractJob`（mode/stride 或 interval）与抽帧执行，生成带 `extract_job_id` 的 frame，并验证任务参数可回读
+- [x] 3b.4 实现按抽帧任务浏览候选帧（**默认按 frame_index/时间升序**，展示时间位置）+ **批量删除**未入集帧，并验证排序与 `discarded_count`
+- [x] 3b.5 验证已入集 frame 硬删返回 409；移出数据集后再删成功
+- [x] 3b.6 实现「将审查后剩余帧加入数据集」，并验证可与上传 image 并存
 - [ ] 3b.7 实现数据集 `memberSources` 摘要，发版写入 `member_sources`，并验证发版后改工作区不影响该摘要
 
 ## 4. 扁平标签（asset-tags）
 
-- [ ] 4.1 实现项目内 Tag 创建/列表（重名拒绝），并验证 API 行为
-- [ ] 4.2 实现素材挂载/摘除/覆盖标签，并验证多标签关联
-- [ ] 4.3 实现按多标签交集筛选**库可见**素材列表，并验证筛选结果
+- [x] 4.1 实现项目内 Tag 创建/列表（重名拒绝），并验证 API 行为
+- [x] 4.2 实现素材挂载/摘除/覆盖标签，并验证多标签关联
+- [x] 4.3 实现按多标签交集筛选**库可见**素材列表，并验证筛选结果
 
 ## 5. 数据集（datasets）
 
-- [ ] 5.1 实现 Dataset 创建（含有序 classes、`enabled_annotation_types` 默认 `["rect"]`）与详情 API，并验证类别与启用类型读回正确
-- [ ] 5.2 实现 DatasetAsset 加入/移除（不拷贝、不硬删文件），并验证同一 asset 可属两个数据集
-- [ ] 5.3 实现 split 更新（train/val/test/unassigned），并验证读回一致
-- [ ] 5.4 增加跨项目引用防护测试，验证将他项素材加入本项数据集被拒绝
-- [ ] 5.5 验证「仅含非库可见成员」的数据集可列表与打开内容
+- [x] 5.1 实现 Dataset 创建（含有序 classes、`enabled_annotation_types` 默认 `["rect"]`）与详情 API，并验证类别与启用类型读回正确
+- [x] 5.2 实现 DatasetAsset 加入/移除（不拷贝、不硬删文件），并验证同一 asset 可属两个数据集
+- [x] 5.3 实现 split 更新（train/val/test/unassigned），并验证读回一致
+- [x] 5.4 增加跨项目引用防护测试，验证将他项素材加入本项数据集被拒绝
+- [x] 5.5 验证「仅含非库可见成员」的数据集可列表与打开内容
 
 ## 6. 数据集导入（dataset-import）
 

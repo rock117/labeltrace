@@ -8,9 +8,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.api.assets import router as assets_router
+from app.api.datasets import router as datasets_router
+from app.api.extract import router as extract_router
 from app.api.folders import router as folders_router
 from app.api.jobs import router as jobs_router
 from app.api.projects import router as projects_router
+from app.api.tags import router as tags_router
+# 注册 frame_extract 等 handlers
+import app.jobs.handlers  # noqa: F401
 from app.core.errors import AppError
 from app.core.logging import get_logger, setup_logging
 from app.core.middleware import RequestContextMiddleware
@@ -57,6 +63,10 @@ app.add_middleware(
 app.include_router(jobs_router, prefix="/api/v1")
 app.include_router(projects_router, prefix="/api/v1")
 app.include_router(folders_router, prefix="/api/v1")
+app.include_router(assets_router, prefix="/api/v1")
+app.include_router(extract_router, prefix="/api/v1")
+app.include_router(tags_router, prefix="/api/v1")
+app.include_router(datasets_router, prefix="/api/v1")
 
 
 @app.exception_handler(AppError)

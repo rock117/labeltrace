@@ -22,5 +22,16 @@ def echo_handler(job_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
     return {"echo": payload, "job_id": str(job_id)}
 
 
-# P0 骨架：注册 echo 便于验收 enqueue + 轮询
+def frame_extract_handler(job_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
+    from uuid import UUID as _UUID
+
+    from app.services.extract import run_frame_extract
+
+    raw = payload.get("extract_job_id")
+    if not raw:
+        raise ValueError("frame_extract 缺少 extract_job_id")
+    return run_frame_extract(_UUID(str(raw)))
+
+
 register_handler("echo", echo_handler)
+register_handler("frame_extract", frame_extract_handler)
