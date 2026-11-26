@@ -18,7 +18,7 @@ from app.db.session import get_db
 from app.models.dataset import Dataset
 from app.models.version import DatasetVersion
 from app.services.member_sources import build_member_sources
-from app.services.versions import publish_version
+from app.services.versions import apply_version_to_workspace, publish_version
 
 router = APIRouter(tags=["versions"])
 logger = get_logger("labeltrace.api.versions")
@@ -154,3 +154,35 @@ def get_manifest(
     if m is None:
         raise ForbiddenError("不是项目成员")
     return v.manifest or {"entries": []}
+
+
+class ApplyToWorkspaceOut(BaseModel):
+    added: int
+    overwritten: int
+    skipped: int
+    entryCount: int
+    dataset_id: UUID
+
+
+@router.post(
+    "/versions/{version_id}/apply-to-workspace",
+    response_model=ApplyToWorkspaceOut,
+)
+def apply_to_workspace(
+    version_id: UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> ApplyToWorkspaceOut:
+    v = db.get(DatasetVersion, version_id)
+    if v is None:
+        raise NotFoundError("版本不存在")
+    stats = apply_version_to_workspace(
+        db, version_id=version_id, user_id=user.id
+    )
+    return ApplyToWorkspaceOut(
+        added=stats["added"],
+        overwritten=stats["overwritten"],
+        skipped=stats["skipped"],
+        entryCount=stats["entryCount"],
+        dataset_id=v.dataset_id,
+    )

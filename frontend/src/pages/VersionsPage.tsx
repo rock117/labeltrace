@@ -5,6 +5,7 @@ import type { Dataset, Version } from '../lib/types'
 import { formatError } from '../hooks/useAsync'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
+import { appConfirm } from '../store/dialogStore'
 
 const DATASET_KEY = 'labeltrace.datasetId'
 
@@ -21,6 +22,40 @@ function VersionsInner() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+
+  const applyToWorkspace = async (versionId: string, versionName: string) => {
+    const ok = await appConfirm({
+      title: '应用到工作区',
+      description:
+        `将版本「${versionName}」合并应用到工作区？\n` +
+        `· 同图：覆盖工作区标注（变为草稿）\n` +
+        `· 快照多出的图：加入工作区\n` +
+        `· 工作区多出的图：保留\n` +
+        `不会修改该版本快照本身。`,
+      confirmLabel: '应用',
+    })
+    if (!ok) return
+    setBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const r = await api<{
+        added: number
+        overwritten: number
+        skipped: number
+        dataset_id: string
+      }>(`/v1/versions/${versionId}/apply-to-workspace`, { method: 'POST' })
+      setMessage(
+        `已应用到工作区：新增 ${r.added} · 覆盖 ${r.overwritten}` +
+          (r.skipped ? ` · 跳过 ${r.skipped}` : ''),
+      )
+      localStorage.setItem(DATASET_KEY, r.dataset_id)
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const reload = useCallback(async (id: string) => {
     setLoading(true)
@@ -186,12 +221,17 @@ function VersionsInner() {
                   ) : (
                     <span className="lt-badge">首版</span>
                   )}
-                  <Link
-                    to={`/annotate?version=${v.id}`}
-                    className="lt-btn lt-btn-primary"
-                  >
+                  <Link to={`/annotate?version=${v.id}`} className="lt-btn">
                     查看快照
                   </Link>
+                  <button
+                    type="button"
+                    className="lt-btn lt-btn-primary"
+                    disabled={busy}
+                    onClick={() => void applyToWorkspace(v.id, v.name)}
+                  >
+                    应用到工作区
+                  </button>
                 </div>
               </div>
               {Array.isArray(v.member_sources) && v.member_sources.length > 0 ? (

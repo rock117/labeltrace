@@ -20,6 +20,7 @@ import { AnnotatorCanvas, classColorCss } from '../annotation/AnnotatorCanvas'
 import { formatError } from '../hooks/useAsync'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
+import { appConfirm } from '../store/dialogStore'
 
 const DATASET_KEY = 'labeltrace.datasetId'
 
@@ -55,6 +56,42 @@ function AnnotateInner() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [applying, setApplying] = useState(false)
+
+  const applyVersionToWorkspace = async () => {
+    if (!versionParam || !version) return
+    const ok = await appConfirm({
+      title: '应用到工作区',
+      description:
+        `将版本「${version.name}」合并应用到工作区？\n` +
+        `· 同图：覆盖工作区标注（变为草稿）\n` +
+        `· 快照多出的图：加入工作区\n` +
+        `· 工作区多出的图：保留\n` +
+        `不会修改该版本快照本身。`,
+      confirmLabel: '应用',
+    })
+    if (!ok) return
+    setApplying(true)
+    setError(null)
+    try {
+      const r = await api<{
+        added: number
+        overwritten: number
+        skipped: number
+        dataset_id: string
+      }>(`/v1/versions/${versionParam}/apply-to-workspace`, { method: 'POST' })
+      localStorage.setItem(DATASET_KEY, r.dataset_id)
+      setMessage(
+        `已应用到工作区：新增 ${r.added} · 覆盖 ${r.overwritten}` +
+          (r.skipped ? ` · 跳过 ${r.skipped}` : '') +
+          '，可点「打开工作区」继续编辑',
+      )
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setApplying(false)
+    }
+  }
 
   const enabledTypes = useMemo(() => {
     if (readOnly && version) {
@@ -364,6 +401,14 @@ function AnnotateInner() {
               >
                 返回版本列表
               </Link>
+              <button
+                type="button"
+                className="lt-btn"
+                disabled={applying}
+                onClick={() => void applyVersionToWorkspace()}
+              >
+                {applying ? '应用中…' : '应用到工作区'}
+              </button>
               <Link
                 to={`/annotate?dataset=${version?.dataset_id ?? ''}`}
                 className="lt-btn lt-btn-primary"

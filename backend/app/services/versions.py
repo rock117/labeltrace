@@ -187,3 +187,105 @@ def publish_version(
         len(manifest.get("entries") or []),
     )
     return ver
+
+
+def apply_version_to_workspace(
+    db: Session,
+    *,
+    version_id: UUID,
+    user_id: str,
+) -> dict[str, int]:
+    """将版本快照合并进所属数据集工作区；不修改版本本身。"""
+    from app.auth.deps import WRITE_ROLES, get_membership
+    from app.models.asset import Asset
+
+    ver = db.get(DatasetVersion, version_id)
+    if ver is None:
+        raise NotFoundError("版本不存在")
+    ds = db.get(Dataset, ver.dataset_id)
+    if ds is None:
+        raise NotFoundError("数据集不存在")
+    m = get_membership(db, ds.project_id, user_id)
+    if m is None or m.role not in WRITE_ROLES:
+        raise ForbiddenError("权限不足")
+
+    entries = list((ver.manifest or {}).get("entries") or [])
+    added = 0
+    overwritten = 0
+    skipped = 0
+
+    for entry in entries:
+        raw_id = entry.get("assetId")
+        if not raw_id:
+            skipped += 1
+            continue
+        try:
+            asset_id = UUID(str(raw_id))
+        except ValueError:
+            skipped += 1
+            continue
+        asset = db.get(Asset, asset_id)
+        if asset is None or asset.project_id != ds.project_id:
+            skipped += 1
+            continue
+        if asset.media_kind == "video":
+            skipped += 1
+            continue
+
+        split = str(entry.get("split") or "unassigned")
+        if split not in {"train", "val", "test", "unassigned"}:
+            split = "unassigned"
+        shapes = entry.get("shapes") or {"format": "xyxy_abs", "items": []}
+        if not isinstance(shapes, dict):
+            shapes = {"format": "xyxy_abs", "items": []}
+
+        member = db.get(DatasetAsset, (ver.dataset_id, asset_id))
+        if member is None:
+            db.add(
+                DatasetAsset(
+                    dataset_id=ver.dataset_id,
+                    asset_id=asset_id,
+                    split=split,
+                )
+            )
+            added += 1
+        else:
+            overwritten += 1
+
+        ann = db.scalar(
+            select(Annotation).where(
+                Annotation.dataset_id == ver.dataset_id,
+                Annotation.asset_id == asset_id,
+            )
+        )
+        if ann is None:
+            db.add(
+                Annotation(
+                    dataset_id=ver.dataset_id,
+                    asset_id=asset_id,
+                    shapes=shapes,
+                    status="draft",
+                    updated_by=user_id,
+                )
+            )
+        else:
+            ann.shapes = shapes
+            ann.status = "draft"
+            ann.updated_by = user_id
+
+    db.commit()
+    logger.info(
+        "version_applied_to_workspace version_id=%s dataset_id=%s "
+        "added=%s overwritten=%s skipped=%s",
+        version_id,
+        ver.dataset_id,
+        added,
+        overwritten,
+        skipped,
+    )
+    return {
+        "added": added,
+        "overwritten": overwritten,
+        "skipped": skipped,
+        "entryCount": len(entries),
+    }

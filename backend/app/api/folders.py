@@ -128,3 +128,62 @@ def get_folder(
     if m is None:
         raise ForbiddenError("不是项目成员")
     return folder
+
+
+class FolderRename(BaseModel):
+    name: str = Field(..., min_length=1, max_length=256)
+
+
+@router.patch("/folders/{folder_id}", response_model=FolderOut)
+def rename_folder(
+    folder_id: UUID,
+    body: FolderRename,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Folder:
+    from app.auth.deps import get_membership
+
+    folder = db.get(Folder, folder_id)
+    if folder is None:
+        raise NotFoundError("目录不存在")
+    m = get_membership(db, folder.project_id, user.id)
+    if m is None or m.role not in WRITE_ROLES:
+        raise ForbiddenError("权限不足")
+
+    name = body.name.strip()
+    if not name:
+        raise ConflictError("目录名无效", code="invalid_folder_name")
+
+    parent: Folder | None = None
+    if folder.parent_id is not None:
+        parent = db.get(Folder, folder.parent_id)
+
+    old_path = folder.path
+    new_path = _build_path(parent, name)
+    folder.name = name
+    folder.path = new_path
+
+    descendants = list(
+        db.scalars(
+            select(Folder).where(
+                Folder.project_id == folder.project_id,
+                Folder.path.like(f"{old_path}/%"),
+            )
+        ).all()
+    )
+    for child in descendants:
+        child.path = new_path + child.path[len(old_path) :]
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise ConflictError("同级目录名称已存在") from None
+    db.refresh(folder)
+    logger.info(
+        "folder_renamed folder_id=%s old_path=%s new_path=%s",
+        folder_id,
+        old_path,
+        new_path,
+    )
+    return folder

@@ -1,4 +1,5 @@
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
+import { DialogHost } from '../components/DialogHost'
 import { useAppStore } from '../store/appStore'
 import './shell.css'
 
@@ -95,6 +96,7 @@ export function AppShell() {
           <Outlet />
         </main>
       </div>
+      <DialogHost />
     </div>
   )
 }

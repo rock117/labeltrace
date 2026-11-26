@@ -5,6 +5,7 @@ import type { Project } from '../lib/types'
 import { useAppStore } from '../store/appStore'
 import { formatError } from '../hooks/useAsync'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
+import { appPrompt } from '../store/dialogStore'
 
 export function ProjectsPage() {
   const navigate = useNavigate()
@@ -19,6 +20,32 @@ export function ProjectsPage() {
   const enterProject = (id: string, projectName: string) => {
     setProject(id, projectName)
     navigate('/library')
+  }
+
+  const rename = async (p: Project) => {
+    const next = await appPrompt({
+      title: '重命名项目',
+      label: '项目名称',
+      defaultValue: p.name,
+      confirmLabel: '保存',
+    })
+    if (next == null) return
+    const name = next.trim()
+    if (!name || name === p.name) return
+    setBusy(true)
+    setError(null)
+    try {
+      const updated = await api<Project>(`/v1/projects/${p.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+      })
+      if (p.id === projectId) setProject(updated.id, updated.name)
+      await reload()
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
   }
 
   const reload = async () => {
@@ -106,33 +133,55 @@ export function ProjectsPage() {
         {items.map((p) => {
           const active = p.id === projectId
           return (
-            <button
+            <div
               key={p.id}
-              type="button"
               className="lt-panel"
               style={{
                 padding: '0.85rem 1rem',
-                textAlign: 'left',
-                cursor: 'pointer',
                 borderColor: active ? 'var(--lt-accent)' : undefined,
                 background: active ? 'var(--lt-accent-soft)' : undefined,
+                display: 'flex',
+                gap: 12,
+                alignItems: 'center',
+                justifyContent: 'space-between',
               }}
-              onClick={() => enterProject(p.id, p.name)}
             >
-              <div style={{ fontWeight: 600 }}>{p.name}</div>
-              <div className="mono" style={{ color: 'var(--lt-fg-subtle)', fontSize: 12 }}>
-                {p.id}
-              </div>
-              {active ? (
-                <span className="lt-badge" style={{ marginTop: 6 }}>
-                  当前 · 进入素材库
-                </span>
-              ) : (
-                <span className="lt-muted" style={{ marginTop: 6, display: 'block' }}>
-                  进入此项目
-                </span>
-              )}
-            </button>
+              <button
+                type="button"
+                style={{
+                  flex: 1,
+                  textAlign: 'left',
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: 'inherit',
+                  padding: 0,
+                }}
+                onClick={() => enterProject(p.id, p.name)}
+              >
+                <div style={{ fontWeight: 600 }}>{p.name}</div>
+                <div className="mono" style={{ color: 'var(--lt-fg-subtle)', fontSize: 12 }}>
+                  {p.id}
+                </div>
+                {active ? (
+                  <span className="lt-badge" style={{ marginTop: 6 }}>
+                    当前 · 进入素材库
+                  </span>
+                ) : (
+                  <span className="lt-muted" style={{ marginTop: 6, display: 'block' }}>
+                    进入此项目
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                className="lt-btn"
+                disabled={busy}
+                onClick={() => void rename(p)}
+              >
+                重命名
+              </button>
+            </div>
           )
         })}
       </div>

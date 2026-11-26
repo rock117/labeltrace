@@ -7,6 +7,7 @@ import { formatError } from '../hooks/useAsync'
 import { AuthImage } from '../components/AuthImage'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
+import { appPrompt } from '../store/dialogStore'
 
 const EXTRACT_KEY = 'labeltrace.lastExtractJobId'
 const FOLDER_KEY = 'labeltrace.folderId'
@@ -137,6 +138,68 @@ function LibraryInner() {
       setNewFolderName('')
       setMessage(`已创建目录：${created.path}`)
       await enterFolder(created, [...trail, created])
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const renameFolder = async (target: Folder) => {
+    const next = await appPrompt({
+      title: '重命名目录',
+      label: '目录名称',
+      defaultValue: target.name,
+      confirmLabel: '保存',
+    })
+    if (next == null) return
+    const name = next.trim()
+    if (!name || name === target.name) return
+    setBusy(true)
+    setError(null)
+    try {
+      const updated = await api<Folder>(`/v1/folders/${target.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+      })
+      setMessage(`已重命名目录：${updated.path}`)
+      if (folder?.id === updated.id) {
+        const nextTrail = [...trail]
+        const i = nextTrail.findIndex((f) => f.id === updated.id)
+        if (i >= 0) nextTrail[i] = updated
+        await enterFolder(updated, nextTrail.length ? nextTrail : [updated])
+      } else if (folder) {
+        setChildFolders(await loadChildren(folder.id))
+      } else {
+        setChildFolders(await loadChildren(null))
+      }
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const renameAsset = async (asset: Asset) => {
+    const next = await appPrompt({
+      title: '重命名素材',
+      label: '显示名称',
+      defaultValue: asset.filename,
+      confirmLabel: '保存',
+    })
+    if (next == null) return
+    const filename = next.trim()
+    if (!filename || filename === asset.filename) return
+    setBusy(true)
+    setError(null)
+    try {
+      const updated = await api<Asset>(`/v1/assets/${asset.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ filename }),
+      })
+      if (folder) await loadAssets(folder.id)
+      if (selectedVideo?.id === updated.id) setSelectedVideo(updated)
+      setMessage(`已重命名：${updated.filename}`)
     } catch (e) {
       setError(formatError(e))
     } finally {
@@ -350,6 +413,16 @@ function LibraryInner() {
         >
           新建目录
         </button>
+        {folder ? (
+          <button
+            type="button"
+            className="lt-btn"
+            disabled={busy}
+            onClick={() => void renameFolder(folder)}
+          >
+            重命名当前目录
+          </button>
+        ) : null}
       </div>
 
       <div
@@ -368,20 +441,35 @@ function LibraryInner() {
           {childFolders.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
               {childFolders.map((f) => (
-                <button
-                  key={f.id}
-                  type="button"
-                  className="lt-btn"
-                  style={{ justifyContent: 'flex-start', height: 'auto', padding: '0.55rem 0.65rem' }}
-                  onClick={() => void enterFolder(f, [...trail, f])}
-                >
-                  <span style={{ textAlign: 'left' }}>
-                    <div style={{ fontWeight: 600 }}>{f.name}</div>
-                    <div className="mono" style={{ fontSize: 11, color: 'var(--lt-fg-subtle)' }}>
-                      {f.path}
-                    </div>
-                  </span>
-                </button>
+                <div key={f.id} style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
+                  <button
+                    type="button"
+                    className="lt-btn"
+                    style={{
+                      flex: 1,
+                      justifyContent: 'flex-start',
+                      height: 'auto',
+                      padding: '0.55rem 0.65rem',
+                    }}
+                    onClick={() => void enterFolder(f, [...trail, f])}
+                  >
+                    <span style={{ textAlign: 'left' }}>
+                      <div style={{ fontWeight: 600 }}>{f.name}</div>
+                      <div className="mono" style={{ fontSize: 11, color: 'var(--lt-fg-subtle)' }}>
+                        {f.path}
+                      </div>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="lt-btn"
+                    disabled={busy}
+                    title="重命名目录"
+                    onClick={() => void renameFolder(f)}
+                  >
+                    改名
+                  </button>
+                </div>
               ))}
             </div>
           ) : null}
@@ -406,34 +494,44 @@ function LibraryInner() {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {videos.map((v) => (
-                    <button
-                      key={v.id}
-                      type="button"
-                      className="lt-btn"
-                      style={{
-                        justifyContent: 'flex-start',
-                        height: 'auto',
-                        padding: '0.55rem 0.65rem',
-                        background:
-                          selectedVideo?.id === v.id
-                            ? 'var(--lt-accent-soft)'
-                            : undefined,
-                      }}
-                      onClick={() => setSelectedVideo(v)}
-                    >
-                      <span style={{ textAlign: 'left' }}>
-                        <div style={{ fontWeight: 600 }}>{v.filename}</div>
-                        <div
-                          className="mono"
-                          style={{ fontSize: 11, color: 'var(--lt-fg-subtle)' }}
-                        >
-                          {v.duration_ms != null
-                            ? `${(v.duration_ms / 1000).toFixed(1)}s`
-                            : '—'}
-                          {v.fps != null ? ` · ${v.fps.toFixed(1)} fps` : ''}
-                        </div>
-                      </span>
-                    </button>
+                    <div key={v.id} style={{ display: 'flex', gap: 6 }}>
+                      <button
+                        type="button"
+                        className="lt-btn"
+                        style={{
+                          flex: 1,
+                          justifyContent: 'flex-start',
+                          height: 'auto',
+                          padding: '0.55rem 0.65rem',
+                          background:
+                            selectedVideo?.id === v.id
+                              ? 'var(--lt-accent-soft)'
+                              : undefined,
+                        }}
+                        onClick={() => setSelectedVideo(v)}
+                      >
+                        <span style={{ textAlign: 'left' }}>
+                          <div style={{ fontWeight: 600 }}>{v.filename}</div>
+                          <div
+                            className="mono"
+                            style={{ fontSize: 11, color: 'var(--lt-fg-subtle)' }}
+                          >
+                            {v.duration_ms != null
+                              ? `${(v.duration_ms / 1000).toFixed(1)}s`
+                              : '—'}
+                            {v.fps != null ? ` · ${v.fps.toFixed(1)} fps` : ''}
+                          </div>
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="lt-btn"
+                        disabled={busy}
+                        onClick={() => void renameAsset(v)}
+                      >
+                        改名
+                      </button>
+                    </div>
                   ))}
                 </div>
               )}
@@ -469,9 +567,25 @@ function LibraryInner() {
                   </h2>
                   <div className="lt-thumb-grid">
                     {images.map((img) => (
-                      <div key={img.id} className="lt-thumb">
+                      <div key={img.id} className="lt-thumb" style={{ position: 'relative' }}>
                         <AuthImage assetId={img.id} alt={img.filename} />
                         <div className="lt-thumb-meta">{img.filename}</div>
+                        <button
+                          type="button"
+                          className="lt-btn"
+                          disabled={busy}
+                          style={{
+                            position: 'absolute',
+                            top: 4,
+                            right: 4,
+                            height: 24,
+                            padding: '0 6px',
+                            fontSize: 11,
+                          }}
+                          onClick={() => void renameAsset(img)}
+                        >
+                          改名
+                        </button>
                       </div>
                     ))}
                   </div>

@@ -17,6 +17,13 @@
 - **WHEN** 用户请求自己的项目列表
 - **THEN** 系统仅返回该用户作为成员的项目
 
+### Requirement: 重命名项目
+系统 SHALL 允许项目管理员更新项目名称。
+
+#### Scenario: 管理员重命名项目
+- **WHEN** 项目管理员提交新的合法项目名称
+- **THEN** 项目名称更新为新名称
+
 ### Requirement: 项目成员与角色
 系统 SHALL 支持项目成员及角色 `admin`、`annotator`、`viewer`，并 MUST 对变更类操作按角色鉴权。
 

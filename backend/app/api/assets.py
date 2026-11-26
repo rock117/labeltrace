@@ -17,7 +17,7 @@ from app.auth.deps import (
     get_current_user,
     get_membership,
 )
-from app.core.errors import ForbiddenError, NotFoundError
+from app.core.errors import ForbiddenError, NotFoundError, ValidationAppError
 from app.core.logging import get_logger
 from app.db.session import get_db
 from app.models.asset import Asset
@@ -146,6 +146,37 @@ def get_asset(
     db: Annotated[Session, Depends(get_db)],
 ) -> Asset:
     return get_asset_for_member(db, asset_id, user.id)
+
+
+class AssetRename(BaseModel):
+    filename: str = Field(..., min_length=1, max_length=512)
+
+
+@router.patch("/assets/{asset_id}", response_model=AssetOut)
+def rename_asset(
+    asset_id: UUID,
+    body: AssetRename,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Asset:
+    asset = get_asset_for_member(db, asset_id, user.id)
+    m = get_membership(db, asset.project_id, user.id)
+    if m is None or m.role not in WRITE_ROLES:
+        raise ForbiddenError("权限不足")
+    filename = body.filename.strip()
+    if not filename:
+        raise ValidationAppError("文件名无效")
+    # 仅改展示名；storage_key / 二进制不变
+    asset.filename = filename
+    db.commit()
+    db.refresh(asset)
+    logger.info(
+        "asset_renamed asset_id=%s filename=%s storage_key=%s",
+        asset_id,
+        filename,
+        asset.storage_key,
+    )
+    return asset
 
 
 @router.get("/assets/{asset_id}/content")

@@ -18,8 +18,12 @@ from app.auth.deps import (
     get_membership,
     require_project_role,
 )
+from app.core.errors import ForbiddenError, NotFoundError
+from app.core.logging import get_logger
 from app.db.session import get_db
 from app.models.project import Membership, Project
+
+logger = get_logger("labeltrace.api.projects")
 
 router = APIRouter(tags=["projects"])
 
@@ -78,6 +82,33 @@ def list_projects(
         .order_by(Project.created_at.desc())
     )
     return list(db.scalars(stmt).all())
+
+
+class ProjectRename(BaseModel):
+    name: str = Field(..., min_length=1, max_length=256)
+
+
+@router.patch("/projects/{project_id}", response_model=ProjectOut)
+def rename_project(
+    project_id: UUID,
+    body: ProjectRename,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Project:
+    project = db.get(Project, project_id)
+    if project is None:
+        raise NotFoundError("项目不存在")
+    m = get_membership(db, project_id, user.id)
+    if m is None or m.role not in ADMIN_ROLES:
+        raise ForbiddenError("仅管理员可重命名项目")
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="项目名称无效")
+    project.name = name
+    db.commit()
+    db.refresh(project)
+    logger.info("project_renamed project_id=%s name=%s", project_id, name)
+    return project
 
 
 @router.post(

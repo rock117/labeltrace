@@ -13,6 +13,7 @@ import { formatError } from '../hooks/useAsync'
 import { AuthImage } from '../components/AuthImage'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
+import { appConfirm, appPrompt } from '../store/dialogStore'
 
 const EXTRACT_KEY = 'labeltrace.lastExtractJobId'
 const DATASET_KEY = 'labeltrace.datasetId'
@@ -191,9 +192,43 @@ function DatasetsInner() {
     })
   }
 
+  const renameDataset = async () => {
+    if (!active) return
+    const next = await appPrompt({
+      title: '重命名数据集',
+      label: '数据集名称',
+      defaultValue: active.name,
+      confirmLabel: '保存',
+    })
+    if (next == null) return
+    const name = next.trim()
+    if (!name || name === active.name) return
+    setBusy(true)
+    setError(null)
+    try {
+      const ds = await api<Dataset>(`/v1/datasets/${active.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+      })
+      setDatasets((prev) => prev.map((d) => (d.id === ds.id ? ds : d)))
+      setActive(ds)
+      setMessage(`已重命名为 ${ds.name}`)
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const removeMember = async (assetId: string) => {
     if (!active) return
-    if (!window.confirm('从数据集移出该素材？不会删除素材库中的文件。')) return
+    const ok = await appConfirm({
+      title: '移出数据集成员',
+      description: '从数据集移出该素材？不会删除素材库中的文件。',
+      confirmLabel: '移出',
+      danger: true,
+    })
+    if (!ok) return
     setBusy(true)
     setError(null)
     try {
@@ -362,6 +397,14 @@ function DatasetsInner() {
                     </p>
                   </div>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <button
+                      type="button"
+                      className="lt-btn"
+                      disabled={busy}
+                      onClick={() => void renameDataset()}
+                    >
+                      重命名
+                    </button>
                     <button
                       type="button"
                       className="lt-btn lt-btn-primary"

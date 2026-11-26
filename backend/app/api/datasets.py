@@ -148,6 +148,33 @@ def get_dataset(
     return _dataset_out(db, ds)
 
 
+class DatasetRename(BaseModel):
+    name: str = Field(..., min_length=1, max_length=256)
+
+
+@router.patch("/datasets/{dataset_id}", response_model=DatasetOut)
+def rename_dataset(
+    dataset_id: UUID,
+    body: DatasetRename,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> DatasetOut:
+    ds = db.get(Dataset, dataset_id)
+    if ds is None:
+        raise NotFoundError("数据集不存在")
+    m = get_membership(db, ds.project_id, user.id)
+    if m is None or m.role not in WRITE_ROLES:
+        raise ForbiddenError("权限不足")
+    name = body.name.strip()
+    if not name:
+        raise ValidationAppError("数据集名称无效")
+    ds.name = name
+    db.commit()
+    db.refresh(ds)
+    logger.info("dataset_renamed dataset_id=%s name=%s", dataset_id, name)
+    return _dataset_out(db, ds)
+
+
 @router.post("/datasets/{dataset_id}/assets", response_model=list[DatasetAssetOut])
 def add_assets(
     dataset_id: UUID,
