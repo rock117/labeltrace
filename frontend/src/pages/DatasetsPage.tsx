@@ -1,0 +1,387 @@
+import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { api } from '../lib/api'
+import type {
+  Asset,
+  Dataset,
+  DatasetAsset,
+  Folder,
+  MemberSource,
+} from '../lib/types'
+import { useAppStore } from '../store/appStore'
+import { formatError } from '../hooks/useAsync'
+import { AuthImage } from '../components/AuthImage'
+import { LoadingBlock, StateBlock } from '../components/StateBlock'
+import { RequireProject } from '../components/RequireProject'
+
+const EXTRACT_KEY = 'labeltrace.lastExtractJobId'
+const DATASET_KEY = 'labeltrace.datasetId'
+
+async function ensureRootFolder(projectId: string): Promise<Folder> {
+  const roots = await api<Folder[]>(`/v1/projects/${projectId}/folders`)
+  if (roots.length > 0) return roots[0]
+  return api<Folder>(`/v1/projects/${projectId}/folders`, {
+    method: 'POST',
+    body: JSON.stringify({ name: '素材' }),
+  })
+}
+
+function DatasetsInner() {
+  const projectId = useAppStore((s) => s.projectId)!
+  const [datasets, setDatasets] = useState<Dataset[]>([])
+  const [activeId, setActiveId] = useState<string | null>(
+    localStorage.getItem(DATASET_KEY),
+  )
+  const [active, setActive] = useState<Dataset | null>(null)
+  const [members, setMembers] = useState<DatasetAsset[]>([])
+  const [sources, setSources] = useState<MemberSource[]>([])
+  const [name, setName] = useState('')
+  const [classesText, setClassesText] = useState('person,car')
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  const selectDataset = useCallback(async (id: string) => {
+    setActiveId(id)
+    localStorage.setItem(DATASET_KEY, id)
+    const [ds, mem, src] = await Promise.all([
+      api<Dataset>(`/v1/datasets/${id}`),
+      api<DatasetAsset[]>(`/v1/datasets/${id}/assets`),
+      api<MemberSource[]>(`/v1/datasets/${id}/member-sources`),
+    ])
+    setActive(ds)
+    setMembers(mem)
+    setSources(src)
+  }, [])
+
+  const reload = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const list = await api<Dataset[]>(`/v1/projects/${projectId}/datasets`)
+      setDatasets(list)
+      const prefer =
+        (activeId && list.find((d) => d.id === activeId)?.id) ||
+        list[0]?.id ||
+        null
+      if (prefer) await selectDataset(prefer)
+      else {
+        setActive(null)
+        setMembers([])
+        setSources([])
+      }
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [projectId, activeId, selectDataset])
+
+  useEffect(() => {
+    void reload()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅随项目切换
+  }, [projectId])
+
+  const create = async () => {
+    if (!name.trim()) return
+    setBusy(true)
+    setError(null)
+    try {
+      const classes = classesText
+        .split(/[,，\s]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+      const ds = await api<Dataset>(`/v1/projects/${projectId}/datasets`, {
+        method: 'POST',
+        body: JSON.stringify({
+          name: name.trim(),
+          classes,
+          enabledAnnotationTypes: ['rect'],
+        }),
+      })
+      setName('')
+      setDatasets((prev) => [ds, ...prev])
+      await selectDataset(ds.id)
+      setMessage(`已创建数据集 ${ds.name}`)
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const addFromExtract = async () => {
+    if (!active) return
+    const extractId = localStorage.getItem(EXTRACT_KEY)
+    if (!extractId) {
+      setError('没有最近的抽帧任务，请先在素材库抽帧并审查')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      const added = await api<DatasetAsset[]>(
+        `/v1/datasets/${active.id}/assets/from-extract`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            extract_job_id: extractId,
+            split: 'unassigned',
+          }),
+        },
+      )
+      await selectDataset(active.id)
+      setMessage(`已加入审查剩余帧 ${added.length} 张`)
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const uploadImage = async (file: File) => {
+    if (!active) return
+    setBusy(true)
+    setError(null)
+    try {
+      const folder = await ensureRootFolder(projectId)
+      const fd = new FormData()
+      fd.append('file', file)
+      const asset = await api<Asset>(`/v1/folders/${folder.id}/assets`, {
+        method: 'POST',
+        body: fd,
+      })
+      if (asset.media_kind === 'video') {
+        setError('请上传图片；视频请走素材库抽帧')
+        return
+      }
+      await api(`/v1/datasets/${active.id}/assets`, {
+        method: 'POST',
+        body: JSON.stringify({ asset_ids: [asset.id], split: 'unassigned' }),
+      })
+      await selectDataset(active.id)
+      setMessage(`已上传并入集：${asset.filename}`)
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (loading) return <LoadingBlock />
+
+  return (
+    <div>
+      <div className="lt-page-head">
+        <div>
+          <h1>数据集</h1>
+          <p>将来源摘要可视化：抽帧入集、上传图；再进入标注台。</p>
+        </div>
+      </div>
+
+      {error ? (
+        <StateBlock tone="error" title="出错了" description={error} />
+      ) : null}
+      {message ? (
+        <p style={{ color: 'var(--lt-fg-muted)', marginTop: 0 }}>{message}</p>
+      ) : null}
+
+      <div className="lt-panel" style={{ padding: '1rem', marginBottom: '1rem' }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input
+            className="lt-input"
+            placeholder="数据集名称"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <input
+            className="lt-input"
+            placeholder="类别，逗号分隔"
+            value={classesText}
+            onChange={(e) => setClassesText(e.target.value)}
+            style={{ maxWidth: 240 }}
+          />
+          <button
+            type="button"
+            className="lt-btn lt-btn-primary"
+            disabled={busy || !name.trim()}
+            onClick={() => void create()}
+          >
+            创建
+          </button>
+        </div>
+      </div>
+
+      {datasets.length === 0 ? (
+        <StateBlock title="暂无数据集" description="创建数据集后，可将审查剩余帧或上传图加入。" />
+      ) : (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '220px 1fr',
+            gap: '1rem',
+            alignItems: 'start',
+          }}
+        >
+          <aside className="lt-panel" style={{ padding: '0.5rem' }}>
+            {datasets.map((d) => (
+              <button
+                key={d.id}
+                type="button"
+                className="lt-btn"
+                style={{
+                  width: '100%',
+                  justifyContent: 'flex-start',
+                  marginBottom: 4,
+                  background:
+                    d.id === active?.id ? 'var(--lt-accent-soft)' : undefined,
+                }}
+                onClick={() => void selectDataset(d.id)}
+              >
+                {d.name}
+              </button>
+            ))}
+          </aside>
+
+          {active ? (
+            <section>
+              <div className="lt-panel" style={{ padding: '1rem', marginBottom: '1rem' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                  }}
+                >
+                  <div>
+                    <h2 style={{ margin: 0 }}>{active.name}</h2>
+                    <p style={{ margin: '0.25rem 0 0', color: 'var(--lt-fg-muted)' }}>
+                      类别：{active.classes.join(', ') || '（无）'} · 工具：
+                      {active.enabled_annotation_types.join(', ')}
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="lt-btn lt-btn-primary"
+                      disabled={busy}
+                      onClick={() => void addFromExtract()}
+                    >
+                      加入审查剩余帧
+                    </button>
+                    <label className="lt-btn" style={{ cursor: 'pointer' }}>
+                      上传图片入集
+                      <input
+                        type="file"
+                        accept="image/*"
+                        hidden
+                        disabled={busy}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0]
+                          if (f) void uploadImage(f)
+                          e.target.value = ''
+                        }}
+                      />
+                    </label>
+                    <Link
+                      to={`/annotate?dataset=${active.id}`}
+                      className="lt-btn"
+                    >
+                      打开标注台
+                    </Link>
+                    <Link
+                      to={`/versions?dataset=${active.id}`}
+                      className="lt-btn"
+                    >
+                      版本
+                    </Link>
+                  </div>
+                </div>
+              </div>
+
+              <div className="lt-panel" style={{ padding: '1rem', marginBottom: '1rem' }}>
+                <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem' }}>
+                  来源摘要
+                </h3>
+                {sources.length === 0 ? (
+                  <StateBlock title="尚无成员" description="从抽帧审查入集，或上传图片。" />
+                ) : (
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    {sources.map((s, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          padding: '0.65rem 0.75rem',
+                          background: 'var(--lt-bg-muted)',
+                          borderRadius: 'var(--lt-radius)',
+                        }}
+                      >
+                        {s.kind === 'extract' ? (
+                          <>
+                            <span className="lt-badge">抽帧</span>{' '}
+                            {s.videoName || s.videoId} · {s.frameCount} 帧
+                            {s.mode === 'stride_frames' && s.stride != null
+                              ? ` · stride ${s.stride}`
+                              : null}
+                          </>
+                        ) : null}
+                        {s.kind === 'upload' ? (
+                          <>
+                            <span className="lt-badge">上传</span> {s.imageCount}{' '}
+                            张图
+                          </>
+                        ) : null}
+                        {s.kind === 'import' ? (
+                          <>
+                            <span className="lt-badge">导入</span> {s.imageCount}{' '}
+                            张
+                          </>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="lt-panel" style={{ padding: '1rem' }}>
+                <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem' }}>
+                  成员（{members.length}）
+                </h3>
+                {members.length === 0 ? (
+                  <StateBlock title="空数据集" description="入集后可在标注台画框。" />
+                ) : (
+                  <div className="lt-thumb-grid">
+                    {members.map((m) => (
+                      <Link
+                        key={m.asset_id}
+                        to={`/annotate?dataset=${active.id}&asset=${m.asset_id}`}
+                        className="lt-thumb"
+                        title={m.filename}
+                      >
+                        <AuthImage assetId={m.asset_id} alt={m.filename} />
+                        <div className="lt-thumb-meta">
+                          {m.media_kind} · {m.split}
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+          ) : null}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function DatasetsPage() {
+  return (
+    <RequireProject>
+      <DatasetsInner />
+    </RequireProject>
+  )
+}

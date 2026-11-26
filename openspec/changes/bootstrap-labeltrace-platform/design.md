@@ -626,11 +626,24 @@ services:
 
 ## Open Questions
 
-1. 库内坐标用 `xyxy_abs` 还是归一化？  
-2. 标注 GET 无记录时 `404` 还是空 `draft`？  
-3. annotator 是否允许发版 / 导入 / 抽帧？  
-4. 导入到**已有非空**数据集时：合并、拒绝，还是仅允许空集/新建？  
-5. 对象存储是否 P0 就做浏览器直传（presign），还是一律经 API 中转？  
-6. UI 底座：Radix + 自研皮肤，或其它 headless（不得用未定制默认主题交差）？  
-7. 默认抽帧策略：每隔几帧 / 每多少秒？上传后自动抽还是仅手动？  
-8. frame 落盘已定；是否需「审查删除后定期 GC」策略细节？
+1. ~~库内坐标用 `xyxy_abs` 还是归一化？~~ **已定：`format=xyxy_abs`（像素绝对坐标 `[x1,y1,x2,y2]`）**；导出 YOLO 时再归一化（导出延后）。  
+2. ~~标注 GET 无记录时 `404` 还是空 `draft`？~~ **已定：返回空 draft（200）**，便于标注台。  
+3. ~~annotator 是否允许发版 / 导入 / 抽帧？~~ **已定：annotator 可抽帧与标注；发版仅 admin；导入延后。**  
+4. 导入到**已有非空**数据集时：合并、拒绝，还是仅允许空集/新建？（**导入延后**，本 change 不收口）  
+5. ~~对象存储是否 P0 就做浏览器直传（presign），还是一律经 API 中转？~~ **已定：一律经 API。**  
+6. ~~UI 底座：Radix + 自研皮肤，或其它 headless？~~ **已定：自研 tokens + CSS 组件皮肤（无默认后台主题）；P0 未引入 Radix。**  
+7. ~~默认抽帧策略？~~ **已定：仅手动触发；UI 默认 stride=30，API 可传 stride/interval；样例/验收常用 stride=5。**  
+8. ~~frame 审查删除后 GC？~~ **已定：硬删即清 blob，无单独 GC。**
+
+### 11.3 接口核对摘要（主体已实现）
+
+| 区域 | 结论 |
+|------|------|
+| 项目/成员 | `POST/GET /projects`、`POST .../members`；viewer 写操作 403 |
+| 目录/素材 | folders CRUD；`POST/GET .../assets`；content RFC5987；硬删引用 409 |
+| 抽帧 | `POST .../extract-jobs`；frames 时间升序；batch-delete → `discarded_count` |
+| 数据集 | `POST/GET .../datasets`（含列表）；成员/from-extract；不可直接加 video |
+| 标注 | PUT/GET shapes+`type`；空 draft 200；未启用类型 422 |
+| 版本 | 发版快照+`member_sources`+diff；manifest 只读；发版后改工作区不影响版本 |
+| 血缘 | `GET .../lineage`；frame 含 parentVideoId/frameIndex |
+| 延后 | dataset import、YOLO zip 导出（tasks 6.x / 8.3–8.4） |

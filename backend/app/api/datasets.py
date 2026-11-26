@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import (
+    ALL_ROLES,
     WRITE_ROLES,
     CurrentUser,
     get_current_user,
@@ -111,6 +112,25 @@ def create_dataset(
     db.refresh(ds)
     logger.info("dataset_created dataset_id=%s", ds.id)
     return _dataset_out(db, ds)
+
+
+@router.get(
+    "/projects/{project_id}/datasets",
+    response_model=list[DatasetOut],
+)
+def list_datasets(
+    project_id: UUID,
+    _: Annotated[Membership, Depends(require_project_role(*ALL_ROLES))],
+    db: Annotated[Session, Depends(get_db)],
+) -> list[DatasetOut]:
+    rows = list(
+        db.scalars(
+            select(Dataset)
+            .where(Dataset.project_id == project_id)
+            .order_by(Dataset.created_at.desc())
+        ).all()
+    )
+    return [_dataset_out(db, ds) for ds in rows]
 
 
 @router.get("/datasets/{dataset_id}", response_model=DatasetOut)

@@ -1,0 +1,75 @@
+/* LabelTrace Design Tokens — 浅色工具风默认，可切 dark */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap');
+
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+
+  --lt-font-sans: 'IBM Plex Sans', 'Noto Sans SC', system-ui, sans-serif;
+  --lt-font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --lt-bg: #f4f6f8;
+  --lt-bg-elevated: #ffffff;
+  --lt-bg-muted: #e8eef3;
+  --lt-bg-canvas: #dfe6ec;
+
+  --lt-fg: #0f1720;
+  --lt-fg-muted: #5a6b7c;
+  --lt-fg-subtle: #8494a7;
+
+  --lt-border: #cdd6e0;
+  --lt-border-strong: #9aabbc;
+
+  --lt-accent: #0f766e;
+  --lt-accent-hover: #0d9488;
+  --lt-accent-fg: #ffffff;
+  --lt-accent-soft: rgba(15, 118, 110, 0.12);
+
+  --lt-danger: #b42318;
+  --lt-danger-soft: rgba(180, 35, 24, 0.12);
+  --lt-warning: #b54708;
+  --lt-success: #067647;
+
+  --lt-class-0: #0f766e;
+  --lt-class-1: #c2410c;
+  --lt-class-2: #1d4ed8;
+  --lt-class-3: #a16207;
+  --lt-class-4: #7c3aed;
+
+  --lt-radius-sm: 4px;
+  --lt-radius: 6px;
+  --lt-radius-lg: 10px;
+
+  --lt-shadow: 0 1px 2px rgba(15, 23, 32, 0.06), 0 4px 12px rgba(15, 23, 32, 0.04);
+  --lt-sidebar-w: 220px;
+  --lt-topbar-h: 52px;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --lt-bg: #0e1217;
+  --lt-bg-elevated: #161c24;
+  --lt-bg-muted: #1c2430;
+  --lt-bg-canvas: #0a0e13;
+
+  --lt-fg: #e8eef4;
+  --lt-fg-muted: #9aabbc;
+  --lt-fg-subtle: #6b7c8f;
+
+  --lt-border: #2a3544;
+  --lt-border-strong: #3d4d60;
+
+  --lt-accent: #2dd4bf;
+  --lt-accent-hover: #5eead4;
+  --lt-accent-fg: #042f2e;
+  --lt-accent-soft: rgba(45, 212, 191, 0.14);
+
+  --lt-danger: #f97066;
+  --lt-danger-soft: rgba(249, 112, 102, 0.16);
+  --lt-warning: #fdb022;
+  --lt-success: #47cd89;
+
+  --lt-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.28);
+}

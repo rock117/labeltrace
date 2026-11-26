@@ -1,23 +1,27 @@
-import { create } from 'zustand'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { AppShell } from './layout/AppShell'
+import { ProjectsPage } from './pages/ProjectsPage'
+import { LibraryPage } from './pages/LibraryPage'
+import { DatasetsPage } from './pages/DatasetsPage'
+import { AnnotatePage } from './pages/AnnotatePage'
+import { VersionsPage } from './pages/VersionsPage'
+import './styles/tokens.css'
+import './styles/base.css'
+import './styles/components.css'
 
-type AppStore = {
-  ready: boolean
-}
-
-const useAppStore = create<AppStore>(() => ({
-  ready: true,
-}))
-
-function App() {
-  const ready = useAppStore((s) => s.ready)
-
+export default function App() {
   return (
-    <main style={{ fontFamily: 'system-ui', padding: '2rem' }}>
-      <h1>LabelTrace</h1>
-      <p>前端骨架已就绪（React + Vite + Zustand + Konva）。</p>
-      <p>状态：{ready ? 'ok' : 'loading'}</p>
-    </main>
+    <BrowserRouter>
+      <Routes>
+        <Route element={<AppShell />}>
+          <Route index element={<ProjectsPage />} />
+          <Route path="library" element={<LibraryPage />} />
+          <Route path="datasets" element={<DatasetsPage />} />
+          <Route path="annotate" element={<AnnotatePage />} />
+          <Route path="versions" element={<VersionsPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
   )
 }
-
-export default App
