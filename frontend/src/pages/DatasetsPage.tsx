@@ -191,6 +191,24 @@ function DatasetsInner() {
     })
   }
 
+  const removeMember = async (assetId: string) => {
+    if (!active) return
+    if (!window.confirm('从数据集移出该素材？不会删除素材库中的文件。')) return
+    setBusy(true)
+    setError(null)
+    try {
+      await api(`/v1/datasets/${active.id}/assets/${assetId}`, {
+        method: 'DELETE',
+      })
+      await selectDataset(active.id)
+      setMessage('已从数据集移出')
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const addFromLibrary = async () => {
     if (!active) return
     if (picked.size === 0) {
@@ -535,17 +553,35 @@ function DatasetsInner() {
                 ) : (
                   <div className="lt-thumb-grid">
                     {members.map((m) => (
-                      <Link
-                        key={m.asset_id}
-                        to={`/annotate?dataset=${active.id}&asset=${m.asset_id}`}
-                        className="lt-thumb"
-                        title={m.filename}
-                      >
-                        <AuthImage assetId={m.asset_id} alt={m.filename} />
-                        <div className="lt-thumb-meta">
-                          {m.media_kind} · {m.split}
-                        </div>
-                      </Link>
+                      <div key={m.asset_id} className="lt-thumb" style={{ position: 'relative' }}>
+                        <Link
+                          to={`/annotate?dataset=${active.id}&asset=${m.asset_id}`}
+                          title={m.filename}
+                          style={{ display: 'block', color: 'inherit' }}
+                        >
+                          <AuthImage assetId={m.asset_id} alt={m.filename} />
+                          <div className="lt-thumb-meta">
+                            {m.media_kind} · {m.split}
+                          </div>
+                        </Link>
+                        <button
+                          type="button"
+                          className="lt-btn lt-btn-danger"
+                          disabled={busy}
+                          style={{
+                            position: 'absolute',
+                            top: 4,
+                            right: 4,
+                            height: 24,
+                            padding: '0 6px',
+                            fontSize: 11,
+                          }}
+                          title="从数据集移出"
+                          onClick={() => void removeMember(m.asset_id)}
+                        >
+                          移出
+                        </button>
+                      </div>
                     ))}
                   </div>
                 )}

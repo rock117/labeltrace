@@ -1,15 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
-import { Stage, Layer, Image as KonvaImage, Rect, Transformer } from 'react-konva'
+import { Fragment, useEffect, useRef, useState } from 'react'
+import {
+  Stage,
+  Layer,
+  Image as KonvaImage,
+  Rect,
+  Transformer,
+  Label,
+  Tag,
+  Text,
+} from 'react-konva'
 import type Konva from 'konva'
 import type { RectShape } from '../lib/types'
-
-const CLASS_COLORS = [
-  'var(--lt-class-0)',
-  'var(--lt-class-1)',
-  'var(--lt-class-2)',
-  'var(--lt-class-3)',
-  'var(--lt-class-4)',
-]
+import type { AnnotationToolType } from './toolRegistry'
 
 function resolveColor(cls: number): string {
   const el = document.documentElement
@@ -17,12 +19,21 @@ function resolveColor(cls: number): string {
   return getComputedStyle(el).getPropertyValue(key).trim() || '#0f766e'
 }
 
+function classNameOf(classes: string[], cls: number): string {
+  return classes[cls] ?? `class${cls}`
+}
+
 type Props = {
   imageUrl: string
   naturalWidth: number
   naturalHeight: number
   shapes: RectShape[]
+  classNames: string[]
   activeClass: number
+  /** P0 仅 rect；多工具时由工具栏切换 */
+  activeTool: AnnotationToolType
+  /** 版本快照浏览时为 true：不可绘制/拖拽 */
+  readOnly?: boolean
   onChange: (shapes: RectShape[]) => void
 }
 
@@ -31,7 +42,10 @@ export function AnnotatorCanvas({
   naturalWidth,
   naturalHeight,
   shapes,
+  classNames,
   activeClass,
+  activeTool,
+  readOnly = false,
   onChange,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -70,23 +84,32 @@ export function AnnotatorCanvas({
   useEffect(() => {
     const tr = trRef.current
     if (!tr) return
-    if (selected == null || !shapeRefs.current[selected]) {
+    if (readOnly || selected == null || !shapeRefs.current[selected]) {
       tr.nodes([])
       tr.getLayer()?.batchDraw()
       return
     }
     tr.nodes([shapeRefs.current[selected]!])
     tr.getLayer()?.batchDraw()
-  }, [selected, shapes])
+  }, [selected, shapes, readOnly])
 
   const toImage = (sx: number, sy: number) => [sx / scale, sy / scale] as const
 
   const onMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
+    if (readOnly || activeTool !== 'rect') return
     const stage = e.target.getStage()
     if (!stage) return
-    // 图铺满 Stage 时点击落在 Image 上；仅在点到已有框/变换器时不新画
+    // 图铺满 Stage 时点击落在 Image 上；点到框/标签/变换器时不新画
     const kind = e.target.getClassName()
-    if (kind === 'Rect' || kind === 'Transformer') return
+    if (
+      kind === 'Rect' ||
+      kind === 'Transformer' ||
+      kind === 'Label' ||
+      kind === 'Tag' ||
+      kind === 'Text'
+    ) {
+      return
+    }
     setSelected(null)
     const pos = stage.getPointerPosition()
     if (!pos) return
@@ -137,7 +160,7 @@ export function AnnotatorCanvas({
     onChange(next)
   }
 
-  void CLASS_COLORS
+  const fontSize = Math.max(11, Math.min(14, 12 * Math.sqrt(scale)))
 
   return (
     <div
@@ -161,13 +184,18 @@ export function AnnotatorCanvas({
             pointerEvents: 'none',
             padding: '0.35rem 0.6rem',
             borderRadius: 'var(--lt-radius)',
-            background: 'color-mix(in srgb, var(--lt-bg-elevated) 92%, transparent)',
+            background:
+              'color-mix(in srgb, var(--lt-bg-elevated) 92%, transparent)',
             border: '1px solid var(--lt-border)',
             color: 'var(--lt-fg-muted)',
             fontSize: 13,
           }}
         >
-          在图上按住拖拽即可画检测框
+          {readOnly
+            ? '只读快照：仅浏览，不可改标'
+            : activeTool === 'rect'
+              ? '在图上按住拖拽即可画检测框'
+              : `当前工具「${activeTool}」尚未实现绘制`}
         </div>
       ) : null}
       <Stage
@@ -177,7 +205,15 @@ export function AnnotatorCanvas({
         onMouseMove={onMouseMove}
         onMouseUp={onMouseUp}
         onMouseLeave={onMouseUp}
-        style={{ margin: '0 auto', display: 'block', cursor: 'crosshair' }}
+        style={{
+          margin: '0 auto',
+          display: 'block',
+          cursor: readOnly
+            ? 'default'
+            : activeTool === 'rect'
+              ? 'crosshair'
+              : 'default',
+        }}
       >
         <Layer>
           {img ? (
@@ -186,25 +222,43 @@ export function AnnotatorCanvas({
           {shapes.map((s, i) => {
             const [x1, y1, x2, y2] = s.bbox
             const color = resolveColor(s.cls)
+            const label = classNameOf(classNames, s.cls)
+            const rx = x1 * scale
+            const ry = y1 * scale
             return (
-              <Rect
-                key={i}
-                ref={(n) => {
-                  shapeRefs.current[i] = n
-                }}
-                x={x1 * scale}
-                y={y1 * scale}
-                width={(x2 - x1) * scale}
-                height={(y2 - y1) * scale}
-                stroke={color}
-                strokeWidth={2}
-                fill={`${color}33`}
-                draggable
-                onClick={() => setSelected(i)}
-                onTap={() => setSelected(i)}
-                onDragEnd={(e) => updateBox(i, e.target as Konva.Rect)}
-                onTransformEnd={(e) => updateBox(i, e.target as Konva.Rect)}
-              />
+              <Fragment key={i}>
+                <Rect
+                  ref={(n) => {
+                    shapeRefs.current[i] = n
+                  }}
+                  x={rx}
+                  y={ry}
+                  width={(x2 - x1) * scale}
+                  height={(y2 - y1) * scale}
+                  stroke={color}
+                  strokeWidth={2}
+                  fill={`${color}33`}
+                  draggable={!readOnly}
+                  onClick={() => !readOnly && setSelected(i)}
+                  onTap={() => !readOnly && setSelected(i)}
+                  onDragEnd={(e) => {
+                    if (!readOnly) updateBox(i, e.target as Konva.Rect)
+                  }}
+                  onTransformEnd={(e) => {
+                    if (!readOnly) updateBox(i, e.target as Konva.Rect)
+                  }}
+                />
+                <Label x={rx} y={ry} listening={false}>
+                  <Tag fill={color} cornerRadius={2} />
+                  <Text
+                    text={label}
+                    fontSize={fontSize}
+                    fontStyle="600"
+                    fill="#ffffff"
+                    padding={4}
+                  />
+                </Label>
+              </Fragment>
             )
           })}
           {draft ? (

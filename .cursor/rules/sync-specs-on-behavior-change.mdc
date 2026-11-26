@@ -1,0 +1,16 @@
+---
+description: 业务规则或架构变更时同步更新 OpenSpec
+alwaysApply: true
+---
+
+# 行为变更 → 更新 Spec
+
+改代码若影响下列任一，须在同一任务中更新 `openspec/changes/bootstrap-labeltrace-platform/`：
+
+- 业务规则（能否发版、能否删除、权限、可见性等）
+- Spec Scenario 的 WHEN/THEN
+- 领域模型 / API 契约 / design 架构决策
+
+更新范围：相关 `specs/**/spec.md`；架构变化再改 `design.md`；新工作量勾 `tasks.md`；用户流程变了则改 `docs/guides/`。
+
+不问不要改 spec 的情况：纯 UI 样式、重命名内部变量、bugfix 且原 spec 已描述正确行为。

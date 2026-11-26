@@ -122,6 +122,22 @@ export type Version = {
   entry_count: number
 }
 
+export type VersionManifestEntry = {
+  assetId: string
+  contentHash?: string
+  split: string
+  mediaKind: string
+  filename: string
+  shapes: AnnotationShapes
+  annotationStatus?: string
+  parentVideoId?: string | null
+  frameIndex?: number | null
+}
+
+export type VersionManifest = {
+  entries: VersionManifestEntry[]
+}
+
 export type AssetLineage = {
   assetId: string
   origin: string

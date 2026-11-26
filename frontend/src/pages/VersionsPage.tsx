@@ -93,12 +93,11 @@ function VersionsInner() {
         <div>
           <h1>版本</h1>
           <p>
-            {dataset?.name ?? '数据集'} · 发版写入不可变快照；相对父版本可见
-            diff 摘要。
+            {dataset?.name ?? '数据集'} · 全部成员须已「提交」标注后方可发版；已发版本可只读查看快照。
           </p>
         </div>
         <Link to={`/annotate?dataset=${datasetId}`} className="lt-btn">
-          返回标注
+          工作区标注
         </Link>
       </div>
 
@@ -135,7 +134,8 @@ function VersionsInner() {
           </button>
         </div>
         <p style={{ margin: '0.65rem 0 0', color: 'var(--lt-fg-subtle)', fontSize: 13 }}>
-          父版本：{versions[0]?.name ?? '（首版无父）'} · YOLO 导出可后置
+          父版本：{versions[0]?.name ?? '（首版无父）'} · 未提交完会被拒绝 · YOLO
+          导出可后置
         </p>
       </div>
 
@@ -170,21 +170,29 @@ function VersionsInner() {
                     {v.note ? ` · ${v.note}` : ''}
                   </p>
                 </div>
-                {v.change_summary ? (
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    <span className="lt-badge">
-                      +{v.change_summary.added ?? 0} 增
-                    </span>
-                    <span className="lt-badge">
-                      −{v.change_summary.removed ?? 0} 删
-                    </span>
-                    <span className="lt-badge">
-                      ~{v.change_summary.changedAnnotations ?? 0} 改标
-                    </span>
-                  </div>
-                ) : (
-                  <span className="lt-badge">首版</span>
-                )}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  {v.change_summary ? (
+                    <>
+                      <span className="lt-badge">
+                        +{v.change_summary.added ?? 0} 增
+                      </span>
+                      <span className="lt-badge">
+                        −{v.change_summary.removed ?? 0} 删
+                      </span>
+                      <span className="lt-badge">
+                        ~{v.change_summary.changedAnnotations ?? 0} 改标
+                      </span>
+                    </>
+                  ) : (
+                    <span className="lt-badge">首版</span>
+                  )}
+                  <Link
+                    to={`/annotate?version=${v.id}`}
+                    className="lt-btn lt-btn-primary"
+                  >
+                    查看快照
+                  </Link>
+                </div>
               </div>
               {Array.isArray(v.member_sources) && v.member_sources.length > 0 ? (
                 <p

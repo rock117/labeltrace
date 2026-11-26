@@ -100,6 +100,33 @@ def _diff_manifests(
     }
 
 
+def _assert_ready_to_publish(db: Session, dataset_id: UUID) -> None:
+    """全部成员须有 status=submitted 的工作标注；空集不可发版。"""
+    members = list(
+        db.scalars(
+            select(DatasetAsset).where(DatasetAsset.dataset_id == dataset_id)
+        ).all()
+    )
+    if not members:
+        raise ValidationAppError("数据集无成员，无法发版")
+
+    anns = {
+        a.asset_id: a
+        for a in db.scalars(
+            select(Annotation).where(Annotation.dataset_id == dataset_id)
+        ).all()
+    }
+    incomplete = 0
+    for m in members:
+        ann = anns.get(m.asset_id)
+        if ann is None or ann.status != "submitted":
+            incomplete += 1
+    if incomplete:
+        raise ValidationAppError(
+            f"尚有 {incomplete} 个成员未提交标注，无法发版"
+        )
+
+
 def publish_version(
     db: Session,
     *,
@@ -117,6 +144,8 @@ def publish_version(
     m = get_membership(db, ds.project_id, user_id)
     if m is None or m.role != "admin":
         raise ForbiddenError("仅管理员可发版")
+
+    _assert_ready_to_publish(db, dataset_id)
 
     parent: DatasetVersion | None = None
     if parent_id:

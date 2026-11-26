@@ -8,8 +8,14 @@ import type {
   Dataset,
   DatasetAsset,
   RectShape,
+  Version,
+  VersionManifest,
+  VersionManifestEntry,
 } from '../lib/types'
-import { resolveToolbarTools } from '../annotation/toolRegistry'
+import {
+  resolveToolbarTools,
+  type AnnotationToolType,
+} from '../annotation/toolRegistry'
 import { AnnotatorCanvas, classColorCss } from '../annotation/AnnotatorCanvas'
 import { formatError } from '../hooks/useAsync'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
@@ -17,12 +23,26 @@ import { RequireProject } from '../components/RequireProject'
 
 const DATASET_KEY = 'labeltrace.datasetId'
 
+function rectItems(shapes: { items?: { type: string }[] } | null | undefined) {
+  return (shapes?.items ?? []).filter(
+    (s): s is RectShape => s.type === 'rect',
+  )
+}
+
 function AnnotateInner() {
   const [params, setParams] = useSearchParams()
-  const datasetParam = params.get('dataset') || localStorage.getItem(DATASET_KEY)
+  const versionParam = params.get('version')
+  const datasetParam =
+    params.get('dataset') ||
+    (!versionParam ? localStorage.getItem(DATASET_KEY) : null)
   const assetParam = params.get('asset')
+  const readOnly = Boolean(versionParam)
 
   const [dataset, setDataset] = useState<Dataset | null>(null)
+  const [version, setVersion] = useState<Version | null>(null)
+  const [snapshotEntries, setSnapshotEntries] = useState<VersionManifestEntry[]>(
+    [],
+  )
   const [members, setMembers] = useState<DatasetAsset[]>([])
   const [index, setIndex] = useState(0)
   const [asset, setAsset] = useState<Asset | null>(null)
@@ -30,29 +50,63 @@ function AnnotateInner() {
   const [shapes, setShapes] = useState<RectShape[]>([])
   const [imageUrl, setImageUrl] = useState<string | null>(null)
   const [activeClass, setActiveClass] = useState(0)
+  const [activeTool, setActiveTool] = useState<AnnotationToolType>('rect')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
+  const enabledTypes = useMemo(() => {
+    if (readOnly && version) {
+      return (version.enabled_annotation_types as string[]) ?? ['rect']
+    }
+    return dataset?.enabled_annotation_types ?? ['rect']
+  }, [readOnly, version, dataset])
+
   const tools = useMemo(
-    () => resolveToolbarTools(dataset?.enabled_annotation_types ?? ['rect']),
-    [dataset],
+    () => resolveToolbarTools(enabledTypes),
+    [enabledTypes],
   )
 
-  const loadDataset = useCallback(async (id: string) => {
-    const [ds, mem] = await Promise.all([
-      api<Dataset>(`/v1/datasets/${id}`),
-      api<DatasetAsset[]>(`/v1/datasets/${id}/assets`),
-    ])
-    setDataset(ds)
-    setMembers(mem)
-    localStorage.setItem(DATASET_KEY, id)
-    return mem
+  const classNames = useMemo(() => {
+    if (readOnly && version) {
+      return version.classes.length ? version.classes : ['class0']
+    }
+    return dataset?.classes.length ? dataset.classes : ['class0']
+  }, [readOnly, version, dataset])
+
+  const titleName = readOnly
+    ? version?.name ?? '版本'
+    : dataset?.name ?? '数据集'
+
+  useEffect(() => {
+    if (tools.length === 0) return
+    if (!tools.some((t) => t.type === activeTool)) {
+      setActiveTool(tools[0].type)
+    }
+  }, [tools, activeTool])
+
+  const loadContent = useCallback(async (assetId: string) => {
+    const res = await fetch(`/api/v1/assets/${assetId}/content`, {
+      headers: { 'X-User-Id': getUserId() },
+    })
+    if (!res.ok) throw new Error('无法加载图片')
+    const blob = await res.blob()
+    setImageUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev)
+      return URL.createObjectURL(blob)
+    })
   }, [])
 
-  const loadAssetAt = useCallback(
-    async (dsId: string, mem: DatasetAsset[], idx: number) => {
+  const showMember = useCallback(
+    async (opts: {
+      dsId: string | null
+      verId: string | null
+      mem: DatasetAsset[]
+      entries: VersionManifestEntry[]
+      idx: number
+    }) => {
+      const { dsId, verId, mem, entries, idx } = opts
       if (mem.length === 0) {
         setAsset(null)
         setShapes([])
@@ -63,8 +117,25 @@ function AnnotateInner() {
       const safe = Math.max(0, Math.min(idx, mem.length - 1))
       setIndex(safe)
       const member = mem[safe]
-      setParams({ dataset: dsId, asset: member.asset_id }, { replace: true })
+      const nextParams: Record<string, string> = { asset: member.asset_id }
+      if (verId) nextParams.version = verId
+      if (dsId) nextParams.dataset = dsId
+      setParams(nextParams, { replace: true })
 
+      if (verId) {
+        const entry = entries[safe]
+        const [a, lin] = await Promise.all([
+          api<Asset>(`/v1/assets/${member.asset_id}`),
+          api<AssetLineage>(`/v1/assets/${member.asset_id}/lineage`),
+        ])
+        setAsset(a)
+        setLineage(lin)
+        setShapes(rectItems(entry?.shapes))
+        await loadContent(member.asset_id)
+        return
+      }
+
+      if (!dsId) return
       const [a, ann, lin] = await Promise.all([
         api<Asset>(`/v1/assets/${member.asset_id}`),
         api<Annotation>(
@@ -74,42 +145,76 @@ function AnnotateInner() {
       ])
       setAsset(a)
       setLineage(lin)
-      const items = (ann.shapes?.items ?? []).filter(
-        (s): s is RectShape => s.type === 'rect',
-      )
-      setShapes(items)
-
-      const res = await fetch(`/api/v1/assets/${member.asset_id}/content`, {
-        headers: { 'X-User-Id': getUserId() },
-      })
-      if (!res.ok) throw new Error('无法加载图片')
-      const blob = await res.blob()
-      setImageUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev)
-        return URL.createObjectURL(blob)
-      })
+      setShapes(rectItems(ann.shapes))
+      await loadContent(member.asset_id)
     },
-    [setParams],
+    [setParams, loadContent],
   )
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      if (!datasetParam) {
+      if (!versionParam && !datasetParam) {
         setLoading(false)
         return
       }
       setLoading(true)
       setError(null)
       try {
-        const mem = await loadDataset(datasetParam)
-        if (cancelled) return
-        let idx = 0
-        if (assetParam) {
-          const found = mem.findIndex((m) => m.asset_id === assetParam)
-          if (found >= 0) idx = found
+        if (versionParam) {
+          const [ver, manifest] = await Promise.all([
+            api<Version>(`/v1/versions/${versionParam}`),
+            api<VersionManifest>(`/v1/versions/${versionParam}/manifest`),
+          ])
+          if (cancelled) return
+          setVersion(ver)
+          setDataset(null)
+          const entries = manifest.entries ?? []
+          setSnapshotEntries(entries)
+          const mem: DatasetAsset[] = entries.map((e) => ({
+            asset_id: e.assetId,
+            split: e.split,
+            media_kind: e.mediaKind,
+            filename: e.filename,
+          }))
+          setMembers(mem)
+          localStorage.setItem(DATASET_KEY, ver.dataset_id)
+          let idx = 0
+          if (assetParam) {
+            const found = mem.findIndex((m) => m.asset_id === assetParam)
+            if (found >= 0) idx = found
+          }
+          await showMember({
+            dsId: ver.dataset_id,
+            verId: versionParam,
+            mem,
+            entries,
+            idx,
+          })
+        } else if (datasetParam) {
+          setVersion(null)
+          setSnapshotEntries([])
+          const [ds, mem] = await Promise.all([
+            api<Dataset>(`/v1/datasets/${datasetParam}`),
+            api<DatasetAsset[]>(`/v1/datasets/${datasetParam}/assets`),
+          ])
+          if (cancelled) return
+          setDataset(ds)
+          setMembers(mem)
+          localStorage.setItem(DATASET_KEY, datasetParam)
+          let idx = 0
+          if (assetParam) {
+            const found = mem.findIndex((m) => m.asset_id === assetParam)
+            if (found >= 0) idx = found
+          }
+          await showMember({
+            dsId: datasetParam,
+            verId: null,
+            mem,
+            entries: [],
+            idx,
+          })
         }
-        await loadAssetAt(datasetParam, mem, idx)
       } catch (e) {
         if (!cancelled) setError(formatError(e))
       } finally {
@@ -119,7 +224,9 @@ function AnnotateInner() {
     return () => {
       cancelled = true
     }
-  }, [datasetParam, assetParam, loadDataset, loadAssetAt])
+    // 仅随 dataset/version 切换重载；asset 翻页走 go()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datasetParam, versionParam])
 
   useEffect(() => {
     return () => {
@@ -128,7 +235,7 @@ function AnnotateInner() {
   }, [imageUrl])
 
   const save = async (status: 'draft' | 'submitted' = 'draft') => {
-    if (!dataset || !asset) return
+    if (readOnly || !dataset || !asset) return
     setSaving(true)
     setError(null)
     try {
@@ -148,11 +255,17 @@ function AnnotateInner() {
   }
 
   const go = async (delta: number) => {
-    if (!dataset || members.length === 0) return
+    if (members.length === 0) return
     const next = (index + delta + members.length) % members.length
     setLoading(true)
     try {
-      await loadAssetAt(dataset.id, members, next)
+      await showMember({
+        dsId: dataset?.id ?? version?.dataset_id ?? null,
+        verId: versionParam,
+        mem: members,
+        entries: snapshotEntries,
+        idx: next,
+      })
     } catch (e) {
       setError(formatError(e))
     } finally {
@@ -165,9 +278,10 @@ function AnnotateInner() {
       if (e.target instanceof HTMLInputElement) return
       if (e.key === 'a' || e.key === 'ArrowLeft') void go(-1)
       if (e.key === 'd' || e.key === 'ArrowRight') void go(1)
+      if (readOnly) return
       if (e.key >= '1' && e.key <= '9') {
         const cls = Number(e.key) - 1
-        if (dataset && cls < dataset.classes.length) setActiveClass(cls)
+        if (cls < classNames.length) setActiveClass(cls)
       }
       if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault()
@@ -180,13 +294,13 @@ function AnnotateInner() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataset, members, index, shapes, asset])
+  }, [dataset, version, members, index, shapes, asset, readOnly, classNames])
 
-  if (!datasetParam) {
+  if (!versionParam && !datasetParam) {
     return (
       <StateBlock
         title="未选择数据集"
-        description="请先在数据集页创建或打开一个数据集。"
+        description="请先在数据集页创建或打开一个数据集；或从版本页查看快照。"
         action={
           <Link to="/datasets" className="lt-btn lt-btn-primary">
             前往数据集
@@ -202,14 +316,21 @@ function AnnotateInner() {
     return <StateBlock tone="error" title="加载失败" description={error} />
   }
 
-  if (!dataset || members.length === 0) {
+  if (members.length === 0) {
     return (
       <StateBlock
-        title="数据集没有可标注成员"
-        description="请先将审查剩余帧或图片加入数据集。"
+        title={readOnly ? '该版本没有成员' : '数据集没有可标注成员'}
+        description={
+          readOnly
+            ? '此快照为空。'
+            : '请先将审查剩余帧或图片加入数据集。'
+        }
         action={
-          <Link to="/datasets" className="lt-btn lt-btn-primary">
-            返回数据集
+          <Link
+            to={readOnly ? `/versions?dataset=${version?.dataset_id ?? ''}` : '/datasets'}
+            className="lt-btn lt-btn-primary"
+          >
+            返回
           </Link>
         }
       />
@@ -225,36 +346,65 @@ function AnnotateInner() {
         <div>
           <h1>标注台</h1>
           <p>
-            {dataset.name} · {index + 1}/{members.length}
+            <span className="lt-badge" style={{ marginRight: 8 }}>
+              {readOnly ? '版本 · 只读' : '工作区 · 可编辑'}
+            </span>
+            {titleName} · {index + 1}/{members.length}
             {asset ? ` · ${asset.filename}` : ''}
             {tools.length === 0 ? ' · 无可启用工具' : ' · 检测框'}
-            {' · '}
-            右侧选类别 → 图上拖拽画框 → 保存
+            {!readOnly ? ' · 右侧选类别 → 拖拽画框 → 提交' : ''}
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {readOnly ? (
+            <>
+              <Link
+                to={`/versions?dataset=${version?.dataset_id ?? ''}`}
+                className="lt-btn"
+              >
+                返回版本列表
+              </Link>
+              <Link
+                to={`/annotate?dataset=${version?.dataset_id ?? ''}`}
+                className="lt-btn lt-btn-primary"
+              >
+                打开工作区
+              </Link>
+            </>
+          ) : (
+            <Link
+              to={`/versions?dataset=${dataset?.id ?? ''}`}
+              className="lt-btn"
+            >
+              版本
+            </Link>
+          )}
           <button type="button" className="lt-btn" disabled={saving} onClick={() => void go(-1)}>
             上一张
           </button>
           <button type="button" className="lt-btn" disabled={saving} onClick={() => void go(1)}>
             下一张
           </button>
-          <button
-            type="button"
-            className="lt-btn lt-btn-primary"
-            disabled={saving}
-            onClick={() => void save('draft')}
-          >
-            保存
-          </button>
-          <button
-            type="button"
-            className="lt-btn"
-            disabled={saving}
-            onClick={() => void save('submitted')}
-          >
-            提交
-          </button>
+          {!readOnly ? (
+            <>
+              <button
+                type="button"
+                className="lt-btn lt-btn-primary"
+                disabled={saving}
+                onClick={() => void save('draft')}
+              >
+                保存
+              </button>
+              <button
+                type="button"
+                className="lt-btn"
+                disabled={saving}
+                onClick={() => void save('submitted')}
+              >
+                提交
+              </button>
+            </>
+          ) : null}
         </div>
       </div>
 
@@ -274,13 +424,55 @@ function AnnotateInner() {
         }}
       >
         <div>
+          {!readOnly && tools.length > 0 ? (
+            <div
+              style={{
+                display: 'flex',
+                gap: 6,
+                flexWrap: 'wrap',
+                marginBottom: 8,
+                alignItems: 'center',
+              }}
+            >
+              <span className="lt-muted" style={{ marginRight: 4 }}>
+                工具
+              </span>
+              {tools.map((t) => (
+                <button
+                  key={t.type}
+                  type="button"
+                  className="lt-btn"
+                  style={{
+                    background:
+                      activeTool === t.type
+                        ? 'var(--lt-accent-soft)'
+                        : undefined,
+                    color:
+                      activeTool === t.type ? 'var(--lt-accent)' : undefined,
+                  }}
+                  onClick={() => setActiveTool(t.type)}
+                  title={t.shortcut ? `快捷键 ${t.shortcut}` : undefined}
+                >
+                  {t.label}
+                  {t.shortcut ? (
+                    <span className="mono" style={{ opacity: 0.55, marginLeft: 4 }}>
+                      {t.shortcut}
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
           {imageUrl && asset ? (
             <AnnotatorCanvas
               imageUrl={imageUrl}
               naturalWidth={nw}
               naturalHeight={nh}
               shapes={shapes}
+              classNames={classNames}
               activeClass={activeClass}
+              activeTool={activeTool}
+              readOnly={readOnly}
               onChange={setShapes}
             />
           ) : (
@@ -291,27 +483,28 @@ function AnnotateInner() {
         <aside className="lt-panel" style={{ padding: '0.85rem' }}>
           <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.9rem' }}>类别</h3>
           <div style={{ display: 'grid', gap: 4 }}>
-            {(dataset.classes.length ? dataset.classes : ['class0']).map(
-              (name, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  className="lt-btn"
-                  style={{
-                    justifyContent: 'flex-start',
-                    borderLeft: `3px solid ${classColorCss(i)}`,
-                    background:
-                      activeClass === i ? 'var(--lt-accent-soft)' : undefined,
-                  }}
-                  onClick={() => setActiveClass(i)}
-                >
-                  <span className="mono" style={{ opacity: 0.7 }}>
-                    {i + 1}
-                  </span>{' '}
-                  {name}
-                </button>
-              ),
-            )}
+            {classNames.map((name, i) => (
+              <button
+                key={i}
+                type="button"
+                className="lt-btn"
+                disabled={readOnly}
+                style={{
+                  justifyContent: 'flex-start',
+                  borderLeft: `3px solid ${classColorCss(i)}`,
+                  background:
+                    !readOnly && activeClass === i
+                      ? 'var(--lt-accent-soft)'
+                      : undefined,
+                }}
+                onClick={() => !readOnly && setActiveClass(i)}
+              >
+                <span className="mono" style={{ opacity: 0.7 }}>
+                  {i + 1}
+                </span>{' '}
+                {name}
+              </button>
+            ))}
           </div>
 
           <h3 style={{ margin: '1rem 0 0.5rem', fontSize: '0.9rem' }}>血缘</h3>
@@ -331,29 +524,42 @@ function AnnotateInner() {
             </div>
           )}
 
-          <h3 style={{ margin: '1rem 0 0.5rem', fontSize: '0.9rem' }}>框列表</h3>
+          <h3 style={{ margin: '1rem 0 0.5rem', fontSize: '0.9rem' }}>标注列表</h3>
           {shapes.length === 0 ? (
             <p style={{ margin: 0, color: 'var(--lt-fg-subtle)', fontSize: 13 }}>
-              在画布拖拽绘制检测框
+              {readOnly ? '该帧在快照中无框' : '在画布拖拽绘制检测框'}
             </p>
           ) : (
             <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: 13 }}>
               {shapes.map((s, i) => (
                 <li key={i}>
-                  cls {s.cls} · [{s.bbox.map((n) => Math.round(n)).join(', ')}]
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: 8,
+                      height: 8,
+                      borderRadius: 2,
+                      background: `var(--lt-class-${s.cls % 5})`,
+                      marginRight: 6,
+                    }}
+                  />
+                  {classNames[s.cls] ?? `class${s.cls}`} · [
+                  {s.bbox.map((n) => Math.round(n)).join(', ')}]
                 </li>
               ))}
             </ul>
           )}
-          <button
-            type="button"
-            className="lt-btn lt-btn-danger"
-            style={{ marginTop: 8 }}
-            disabled={shapes.length === 0}
-            onClick={() => setShapes((p) => p.slice(0, -1))}
-          >
-            撤销上一框
-          </button>
+          {!readOnly ? (
+            <button
+              type="button"
+              className="lt-btn lt-btn-danger"
+              style={{ marginTop: 8 }}
+              disabled={shapes.length === 0}
+              onClick={() => setShapes((p) => p.slice(0, -1))}
+            >
+              撤销上一框
+            </button>
+          ) : null}
         </aside>
       </div>
     </div>
