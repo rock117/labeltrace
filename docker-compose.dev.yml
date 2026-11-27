@@ -1,0 +1,47 @@
+# 开发覆盖：源码挂载 + 热重载，改业务代码一般不用 docker build
+# 用法（先有过一次正式 build，或至少拉过基础镜像）：
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# 之后只改 Python/前端：保存即可；必要时：
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml restart api
+#
+# 仍需 rebuild 的情况：改了 Dockerfile / requirements.txt / package.json 依赖
+
+services:
+  api:
+    environment:
+      UVICORN_RELOAD: "1"
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+      - ./backend/alembic.ini:/app/alembic.ini
+      - blobs:/data/blobs
+
+  web:
+    # 不再用多阶段 nginx 产物；用 Node 跑 Vite（依赖装在命名卷，避免每次重装）
+    image: node:22-bookworm-slim
+    pull_policy: missing
+    working_dir: /app
+    environment:
+      VITE_API_PROXY: http://api:8000
+    volumes:
+      - ./frontend:/app
+      - web_node_modules:/app/node_modules
+    ports:
+      - "8080:5173"
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        if [ ! -x node_modules/.bin/vite ]; then
+          echo "installing frontend deps (once)..."
+          npm ci --registry=https://registry.npmmirror.com \
+            || npm ci --registry=https://registry.npmjs.org
+        fi
+        exec npm run dev -- --host 0.0.0.0 --port 5173
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  web_node_modules:

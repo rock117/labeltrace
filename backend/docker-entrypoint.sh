@@ -34,4 +34,8 @@ echo "running migrations..."
 alembic upgrade head
 
 echo "starting api..."
+# 开发挂载：UVICORN_RELOAD=1 改代码自动重载，无需 rebuild
+if [ "${UVICORN_RELOAD:-0}" = "1" ]; then
+  exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+fi
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000
