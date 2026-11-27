@@ -5,6 +5,7 @@
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml restart api
 #
 # 仍需 rebuild 的情况：改了 Dockerfile / requirements.txt / package.json 依赖
+name: labeltrace
 
 services:
   api:
@@ -26,8 +27,9 @@ services:
     volumes:
       - ./frontend:/app
       - web_node_modules:/app/node_modules
-    ports:
-      - "8080:5173"
+    # 覆盖（不要追加）主文件里的 38471:80，否则同一宿主机端口绑两次会报 already allocated
+    ports: !override
+      - "127.0.0.1:38471:5173"
     command:
       - sh
       - -c

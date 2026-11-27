@@ -24,7 +24,7 @@ powershell -File scripts/ensure-base-images.ps1   # Windows
 docker compose up -d --build
 ```
 
-- Web：http://127.0.0.1:8080  
+- Web：http://127.0.0.1:38471  
 - API 文档：http://127.0.0.1:8001/docs  
 
 详细说明（环境变量、热重载开发、排错）见：
@@ -52,7 +52,7 @@ docker compose up -d --build
 
 | 容器 | 作用 |
 |------|------|
-| **web** | React 静态 + nginx 反代 `/api`（`:8080`） |
+| **web** | React 静态 + nginx 反代 `/api`（`127.0.0.1:38471`） |
 | **api** | FastAPI + **PG 队列消费者**抽帧（含 ffmpeg，`:8001`） |
 | **postgres** | 元数据与任务队列（`jobs`） |
 | **blobs** volume | 本地对象存储挂载 |

@@ -1,5 +1,7 @@
 # P0：web + api(+PG 队列消费者) + postgres；不拆独立 worker / 不用 Redis
 # 基础镜像：优先本地（pull_policy: missing）；缺失时先跑 scripts/ensure-base-images.*
+name: labeltrace
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -57,7 +59,8 @@ services:
       dockerfile: Dockerfile
       pull: false
     ports:
-      - "8080:80"
+      # 绑本机回环，避开 Windows 上 0.0.0.0 偶发 “port already allocated”
+      - "127.0.0.1:38471:80"
     depends_on:
       api:
         condition: service_healthy

@@ -19,13 +19,31 @@ export function AuthPage() {
   const [mode, setMode] = useState<Mode>('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [password2, setPassword2] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   if (user) return <Navigate to="/projects" replace />
 
+  const passwordsMatch = mode === 'login' || password === password2
+  const canSubmit =
+    !!username.trim() &&
+    (mode === 'login'
+      ? password.length >= 1
+      : password.length >= 6 && passwordsMatch && password2.length >= 6)
+
+  const switchMode = (next: Mode) => {
+    setMode(next)
+    setError(null)
+    setPassword2('')
+  }
+
   const submit = async () => {
-    if (!username.trim() || !password) return
+    if (!canSubmit) return
+    if (mode === 'register' && password !== password2) {
+      setError('两次输入的密码不一致')
+      return
+    }
     setBusy(true)
     setError(null)
     try {
@@ -61,14 +79,14 @@ export function AuthPage() {
           <button
             type="button"
             className={mode === 'login' ? 'lt-btn lt-btn-primary' : 'lt-btn'}
-            onClick={() => setMode('login')}
+            onClick={() => switchMode('login')}
           >
             登录
           </button>
           <button
             type="button"
             className={mode === 'register' ? 'lt-btn lt-btn-primary' : 'lt-btn'}
-            onClick={() => setMode('register')}
+            onClick={() => switchMode('register')}
           >
             注册
           </button>
@@ -99,11 +117,29 @@ export function AuthPage() {
             onKeyDown={(e) => e.key === 'Enter' && void submit()}
           />
         </label>
+        {mode === 'register' ? (
+          <label className="lt-field">
+            <span>确认密码</span>
+            <input
+              className="lt-input"
+              type="password"
+              autoComplete="new-password"
+              value={password2}
+              onChange={(e) => setPassword2(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void submit()}
+            />
+            {password2.length > 0 && !passwordsMatch ? (
+              <span style={{ color: 'var(--lt-danger)', fontSize: 12 }}>
+                两次密码不一致
+              </span>
+            ) : null}
+          </label>
+        ) : null}
         <button
           type="button"
           className="lt-btn lt-btn-primary"
           style={{ width: '100%', marginTop: '0.75rem' }}
-          disabled={busy || !username.trim() || password.length < (mode === 'register' ? 6 : 1)}
+          disabled={busy || !canSubmit}
           onClick={() => void submit()}
         >
           {busy ? '提交中…' : mode === 'login' ? '登录' : '注册并进入'}
