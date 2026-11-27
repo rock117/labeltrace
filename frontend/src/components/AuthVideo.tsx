@@ -80,7 +80,16 @@ export function AuthVideo({ assetId, className, maxHeight = 360 }: Props) {
     )
   }
   return (
-    <div className={className} style={{ display: 'grid', gap: 8 }}>
+    <div
+      className={className}
+      style={{
+        display: 'grid',
+        gap: 8,
+        minWidth: 0,
+        maxWidth: '100%',
+        overflow: 'hidden',
+      }}
+    >
       <video
         ref={videoRef}
         src={url}
@@ -92,6 +101,8 @@ export function AuthVideo({ assetId, className, maxHeight = 360 }: Props) {
         style={{
           display: 'block',
           width: '100%',
+          maxWidth: '100%',
+          height: 'auto',
           maxHeight,
           background: '#000',
           borderRadius: 'var(--lt-radius)',
@@ -103,18 +114,27 @@ export function AuthVideo({ assetId, className, maxHeight = 360 }: Props) {
           gap: 10,
           alignItems: 'flex-start',
           flexWrap: 'wrap',
+          minWidth: 0,
         }}
       >
         <button type="button" className="lt-btn" onClick={grabFrame}>
           截取当前画面
         </button>
-        <span style={{ fontSize: 12, color: 'var(--lt-fg-muted)', paddingTop: 6 }}>
-          拖动进度条或暂停后可查看某一时刻画面
+        <span
+          style={{
+            fontSize: 12,
+            color: 'var(--lt-fg-muted)',
+            paddingTop: 6,
+            minWidth: 0,
+            flex: '1 1 120px',
+          }}
+        >
+          拖动进度条查看某一时刻
           {frameUrl ? ` · ${formatTime(t)}` : ''}
         </span>
       </div>
       {frameUrl ? (
-        <div>
+        <div style={{ minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
           <div
             style={{
               fontSize: 12,
@@ -130,7 +150,8 @@ export function AuthVideo({ assetId, className, maxHeight = 360 }: Props) {
             style={{
               display: 'block',
               width: '100%',
-              maxHeight: 200,
+              maxWidth: '100%',
+              maxHeight: 160,
               objectFit: 'contain',
               background: '#000',
               borderRadius: 'var(--lt-radius)',

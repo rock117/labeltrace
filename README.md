@@ -13,23 +13,28 @@ YOLO 标注与数据集平台。面向甲方以**拍摄视频**为主的交付�
 | 文件 | 可插拔 BlobStore（本地 / S3 兼容） |
 | 抽帧 | ffmpeg；任务队列 `JOB_BACKEND=pg` |
 
-## 快速开始
+## 快速开始（两种方式都保留）
 
-**推荐：一键 Docker Compose**
+**A. Docker 全套** — 服务器部署 / 演示
 
 ```bash
-# 优先本地镜像；缺失则经国内镜像站拉取并打成官方短名
-powershell -File scripts/ensure-base-images.ps1   # Windows
-# bash scripts/ensure-base-images.sh              # Linux / macOS
+powershell -File scripts/ensure-base-images.ps1   # Windows；Linux/macOS 用 .sh
 docker compose up -d --build
 ```
 
-- Web：http://127.0.0.1:38471  
-- API 文档：http://127.0.0.1:8001/docs  
+- Web：http://127.0.0.1:38471 · API：http://127.0.0.1:8001/docs  
 
-详细说明（环境变量、热重载开发、排错）见：
+**B. 宿主机热重载** — 日常改代码（PG 仍用 Docker）
 
-**→ [docs/guides/运行与部署.md](docs/guides/运行与部署.md)**
+```bash
+powershell -File scripts/dev-db.ps1
+powershell -File scripts/dev-api.ps1   # 另开终端
+powershell -File scripts/dev-web.ps1   # 另开终端
+```
+
+- UI：http://127.0.0.1:5173  
+
+详细说明：**→ [docs/guides/运行与部署.md](docs/guides/运行与部署.md)**
 
 ## 主路径（视频优先）
 

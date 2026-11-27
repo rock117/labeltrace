@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import (
@@ -21,7 +23,9 @@ from app.core.logging import get_logger
 from app.db.session import get_db
 from app.jobs.service import JobService, get_job_service
 from app.models.asset import Asset
+from app.models.dataset import DatasetAsset
 from app.models.frame_extract_job import FrameExtractJob
+from app.models.project import Project
 from app.services.extract import (
     batch_delete_frames,
     create_extract_job,
@@ -55,6 +59,24 @@ class ExtractJobOut(BaseModel):
     created_by: str
 
     model_config = {"from_attributes": True}
+
+
+class ProjectExtractJobOut(BaseModel):
+    """项目级抽帧任务列表项：供数据集页多选入集。"""
+
+    id: UUID
+    project_id: UUID
+    video_asset_id: UUID
+    video_filename: str | None
+    mode: str
+    stride: int | None
+    interval_ms: int | None
+    status: str
+    stats: dict
+    remaining_frame_count: int
+    in_dataset_count: int | None = None
+    created_by: str
+    created_at: datetime | None = None
 
 
 class FrameCandidateOut(BaseModel):
@@ -111,6 +133,120 @@ def start_extract(
         user_id=user.id,
         enqueue_job=jobs.enqueue,
     )
+
+
+@router.get(
+    "/assets/{video_asset_id}/extract-jobs",
+    response_model=list[ExtractJobOut],
+)
+def list_video_extract_jobs(
+    video_asset_id: UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> list[FrameExtractJob]:
+    """某视频下的抽帧任务（新→旧）；候选帧只通过任务访问，不进目录主列表。"""
+    video = db.get(Asset, video_asset_id)
+    if video is None:
+        raise NotFoundError("视频不存在")
+    m = get_membership(db, video.project_id, user.id)
+    if m is None:
+        raise ForbiddenError("不是项目成员")
+    return list(
+        db.scalars(
+            select(FrameExtractJob)
+            .where(FrameExtractJob.video_asset_id == video_asset_id)
+            .order_by(FrameExtractJob.created_at.desc())
+        ).all()
+    )
+
+
+@router.get(
+    "/projects/{project_id}/extract-jobs",
+    response_model=list[ProjectExtractJobOut],
+)
+def list_project_extract_jobs(
+    project_id: UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+    status: Annotated[
+        Literal["succeeded", "failed", "pending", "running"] | None,
+        Query(description="按状态筛选；默认仅 succeeded"),
+    ] = "succeeded",
+    dataset_id: Annotated[
+        UUID | None,
+        Query(description="若提供，附带该数据集中已引用的帧数"),
+    ] = None,
+) -> list[ProjectExtractJobOut]:
+    """项目内抽帧任务（新→旧），供数据集页按任务多选入集。"""
+    if db.get(Project, project_id) is None:
+        raise NotFoundError("项目不存在")
+    m = get_membership(db, project_id, user.id)
+    if m is None:
+        raise ForbiddenError("不是项目成员")
+
+    stmt = select(FrameExtractJob).where(FrameExtractJob.project_id == project_id)
+    if status is not None:
+        stmt = stmt.where(FrameExtractJob.status == status)
+    jobs = list(db.scalars(stmt.order_by(FrameExtractJob.created_at.desc())).all())
+    if not jobs:
+        return []
+
+    video_ids = {j.video_asset_id for j in jobs}
+    videos = {
+        a.id: a
+        for a in db.scalars(select(Asset).where(Asset.id.in_(video_ids))).all()
+    }
+    job_ids = [j.id for j in jobs]
+    remaining_rows = db.execute(
+        select(Asset.extract_job_id, func.count())
+        .where(
+            Asset.extract_job_id.in_(job_ids),
+            Asset.media_kind == "frame",
+        )
+        .group_by(Asset.extract_job_id)
+    ).all()
+    remaining_map = {row[0]: int(row[1]) for row in remaining_rows}
+
+    in_dataset_map: dict[UUID, int] = {}
+    if dataset_id is not None:
+        in_rows = db.execute(
+            select(Asset.extract_job_id, func.count())
+            .join(
+                DatasetAsset,
+                DatasetAsset.asset_id == Asset.id,
+            )
+            .where(
+                DatasetAsset.dataset_id == dataset_id,
+                Asset.extract_job_id.in_(job_ids),
+                Asset.media_kind == "frame",
+            )
+            .group_by(Asset.extract_job_id)
+        ).all()
+        in_dataset_map = {row[0]: int(row[1]) for row in in_rows}
+
+    out: list[ProjectExtractJobOut] = []
+    for j in jobs:
+        video = videos.get(j.video_asset_id)
+        out.append(
+            ProjectExtractJobOut(
+                id=j.id,
+                project_id=j.project_id,
+                video_asset_id=j.video_asset_id,
+                video_filename=video.filename if video else None,
+                mode=j.mode,
+                stride=j.stride,
+                interval_ms=j.interval_ms,
+                status=j.status,
+                stats=j.stats or {},
+                remaining_frame_count=remaining_map.get(j.id, 0),
+                in_dataset_count=(
+                    in_dataset_map.get(j.id, 0) if dataset_id is not None else None
+                ),
+                created_by=j.created_by,
+                created_at=j.created_at,
+            )
+        )
+    return out
 
 
 @router.get("/extract-jobs/{extract_job_id}", response_model=ExtractJobOut)

@@ -247,6 +247,63 @@ def extract_frames_interval_ms(
     return results
 
 
+def extract_poster_frame(
+    video_path: Path,
+    out_path: Path,
+    *,
+    at_sec: float = 1.0,
+) -> Path:
+    """从视频截取一帧 JPG 作为列表缩略图（轻量，非整段解码）。"""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    ffmpeg = _bin("ffmpeg")
+    t = max(0.05, float(at_sec))
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-ss",
+        f"{t:.3f}",
+        "-i",
+        str(video_path),
+        "-frames:v",
+        "1",
+        "-q:v",
+        "5",
+        str(out_path),
+    ]
+    logger.info("ffmpeg_poster_start at_sec=%s out=%s", t, out_path.name)
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, check=False, timeout=60
+        )
+    except subprocess.TimeoutExpired as exc:
+        logger.exception("ffmpeg_poster_timeout")
+        raise RuntimeError("ffmpeg 截取封面超时") from exc
+    if proc.returncode != 0 or not out_path.is_file():
+        # 片头黑场或 seek 失败时退回第 0 帧
+        cmd0 = [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(video_path),
+            "-frames:v",
+            "1",
+            "-q:v",
+            "5",
+            str(out_path),
+        ]
+        proc0 = subprocess.run(
+            cmd0, capture_output=True, text=True, check=False, timeout=60
+        )
+        if proc0.returncode != 0 or not out_path.is_file():
+            logger.error(
+                "ffmpeg_poster_failed stderr=%s",
+                (proc.stderr or proc0.stderr or "")[:500],
+            )
+            raise RuntimeError("ffmpeg 截取封面失败")
+    logger.info("ffmpeg_poster_ok path=%s size=%s", out_path.name, out_path.stat().st_size)
+    return out_path
+
+
 def make_sample_video(path: Path, *, seconds: float = 1.0, fps: int = 10) -> Path:
     """生成测试用纯色视频（依赖 ffmpeg）。"""
     path.parent.mkdir(parents=True, exist_ok=True)

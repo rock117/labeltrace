@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     app_name: str = "LabelTrace API"
     database_url: str = (
-        "postgresql+psycopg2://postgres@127.0.0.1:5432/labeltrace"
+        "postgresql+psycopg2://postgres:postgres@127.0.0.1:5433/labeltrace"
     )
     blob_backend: str = "local"
     blob_local_root: str = "./data/blobs"

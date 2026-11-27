@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import (
@@ -59,6 +59,13 @@ class AssetOut(BaseModel):
     extract_job_id: UUID | None = None
 
     model_config = {"from_attributes": True}
+
+
+class FolderAssetsPage(BaseModel):
+    items: list[AssetOut]
+    total: int
+    limit: int
+    offset: int
 
 
 def _ensure_folder_write(
@@ -116,28 +123,41 @@ async def upload_folder_asset(
     return asset
 
 
-@router.get("/folders/{folder_id}/assets", response_model=list[AssetOut])
+@router.get("/folders/{folder_id}/assets", response_model=FolderAssetsPage)
 def list_folder_assets(
     folder_id: UUID,
     user: Annotated[CurrentUser, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
-) -> list[Asset]:
+    media_kind: Annotated[
+        Literal["image", "video"] | None,
+        Query(description="仅返回该类型；默认 image+video"),
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 60,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> FolderAssetsPage:
     folder = db.get(Folder, folder_id)
     if folder is None:
         raise NotFoundError("目录不存在")
     m = get_membership(db, folder.project_id, user.id)
     if m is None:
         raise ForbiddenError("不是项目成员")
-    stmt = (
-        select(Asset)
-        .where(
-            Asset.folder_id == folder_id,
-            Asset.library_visible.is_(True),
-            Asset.media_kind.in_(("image", "video")),
-        )
-        .order_by(Asset.created_at.desc())
+    kinds: tuple[str, ...] = (media_kind,) if media_kind else ("image", "video")
+    base = (
+        Asset.folder_id == folder_id,
+        Asset.library_visible.is_(True),
+        Asset.media_kind.in_(kinds),
     )
-    return list(db.scalars(stmt).all())
+    total = db.scalar(select(func.count()).select_from(Asset).where(*base)) or 0
+    items = list(
+        db.scalars(
+            select(Asset)
+            .where(*base)
+            .order_by(Asset.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        ).all()
+    )
+    return FolderAssetsPage(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.get("/assets/{asset_id}", response_model=AssetOut)
@@ -197,6 +217,23 @@ def get_asset_content(
         content=body,
         media_type=asset.mime or "application/octet-stream",
         headers=headers,
+    )
+
+
+@router.get("/assets/{asset_id}/poster")
+def get_asset_poster(
+    asset_id: UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """视频列表封面：小 JPEG；缺失时服务端用 ffmpeg 生成并缓存。"""
+    from app.services.poster import get_poster_for_member
+
+    _, body = get_poster_for_member(db, asset_id, user.id)
+    return Response(
+        content=body,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=86400"},
     )
 
 

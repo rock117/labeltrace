@@ -15,7 +15,7 @@ services:
       - ./backend/app:/app/app
       - ./backend/alembic:/app/alembic
       - ./backend/alembic.ini:/app/alembic.ini
-      - blobs:/data/blobs
+      - ./backend/data/blobs:/data/blobs
 
   web:
     # 不再用多阶段 nginx 产物；用 Node 跑 Vite（依赖装在命名卷，避免每次重装）

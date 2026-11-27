@@ -22,6 +22,7 @@ from app.auth.deps import (
 from app.core.errors import ForbiddenError, NotFoundError, ValidationAppError
 from app.core.logging import get_logger
 from app.db.session import get_db
+from app.models.annotation import Annotation
 from app.models.asset import Asset
 from app.models.dataset import Dataset, DatasetAsset, DatasetClass
 from app.models.frame_extract_job import FrameExtractJob
@@ -64,6 +65,7 @@ class DatasetAssetOut(BaseModel):
     split: str
     media_kind: str
     filename: str
+    annotation_status: Literal["draft", "submitted"] | None = None
 
 
 class AddExtractFramesIn(BaseModel):
@@ -294,17 +296,39 @@ def list_members(
     rows = db.scalars(
         select(DatasetAsset).where(DatasetAsset.dataset_id == dataset_id)
     ).all()
+    asset_ids = [r.asset_id for r in rows]
+    # asset_id -> (status, has_shapes)
+    status_map: dict[UUID, tuple[str, bool]] = {}
+    if asset_ids:
+        for ann in db.scalars(
+            select(Annotation).where(
+                Annotation.dataset_id == dataset_id,
+                Annotation.asset_id.in_(asset_ids),
+            )
+        ).all():
+            items = (ann.shapes or {}).get("items") or []
+            status_map[ann.asset_id] = (ann.status or "", bool(items))
     out: list[DatasetAssetOut] = []
     for r in rows:
         asset = db.get(Asset, r.asset_id)
         if asset is None:
             continue
+        raw = status_map.get(r.asset_id)
+        ann_status: Literal["draft", "submitted"] | None = None
+        if raw is not None:
+            st, has_shapes = raw
+            if st == "submitted":
+                ann_status = "submitted"
+            elif st == "draft" or has_shapes:
+                # 有框但状态异常时仍视为草稿，避免「有框却算未标注」
+                ann_status = "draft"
         out.append(
             DatasetAssetOut(
                 asset_id=r.asset_id,
                 split=r.split,
                 media_kind=asset.media_kind,
                 filename=asset.filename,
+                annotation_status=ann_status,
             )
         )
     return out

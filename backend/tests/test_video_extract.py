@@ -52,7 +52,7 @@ def test_video_upload_extract_review_and_batch_delete(tmp_path: Path) -> None:
 
         listed = client.get(
             f"/api/v1/folders/{folder}/assets", headers=_h("v1")
-        ).json()
+        ).json()["items"]
         assert any(a["id"] == vid and a["media_kind"] == "video" for a in listed)
 
         ex = client.post(
@@ -94,7 +94,7 @@ def test_video_upload_extract_review_and_batch_delete(tmp_path: Path) -> None:
         # 目录列表不含 frame
         listed2 = client.get(
             f"/api/v1/folders/{folder}/assets", headers=_h("v1")
-        ).json()
+        ).json()["items"]
         assert all(a["media_kind"] != "frame" for a in listed2)
 
         to_del = [items[0]["id"]]

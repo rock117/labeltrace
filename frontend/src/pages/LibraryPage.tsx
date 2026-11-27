@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
-import type { Asset, ExtractJob, Folder, FrameCandidate } from '../lib/types'
+import type {
+  Asset,
+  AssetsPage,
+  Dataset,
+  ExtractJob,
+  Folder,
+  FrameCandidate,
+} from '../lib/types'
 import { useAppStore } from '../store/appStore'
 import { formatError } from '../hooks/useAsync'
 import { AuthImage } from '../components/AuthImage'
@@ -13,25 +20,36 @@ import { appPrompt } from '../store/dialogStore'
 
 const EXTRACT_KEY = 'labeltrace.lastExtractJobId'
 const FOLDER_KEY = 'labeltrace.folderId'
+const PAGE_SIZE = 60
+
+type BrowseKind = 'video' | 'image'
 
 function LibraryInner() {
   const projectId = useAppStore((s) => s.projectId)!
   const [trail, setTrail] = useState<Folder[]>([])
   const [childFolders, setChildFolders] = useState<Folder[]>([])
   const [folder, setFolder] = useState<Folder | null>(null)
+  const [browseKind, setBrowseKind] = useState<BrowseKind>('video')
   const [assets, setAssets] = useState<Asset[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(0)
   const [selectedVideo, setSelectedVideo] = useState<Asset | null>(null)
+  const [selectedImage, setSelectedImage] = useState<Asset | null>(null)
+  const [videoJobs, setVideoJobs] = useState<ExtractJob[]>([])
   const [extractJob, setExtractJob] = useState<ExtractJob | null>(null)
   const [frames, setFrames] = useState<FrameCandidate[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [stride, setStride] = useState(30)
   const [newFolderName, setNewFolderName] = useState('')
+  const [datasets, setDatasets] = useState<Dataset[]>([])
+  const [targetDatasetId, setTargetDatasetId] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
   const currentParentId = folder?.id ?? null
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   const loadChildren = useCallback(
     async (parentId: string | null) => {
@@ -41,22 +59,77 @@ function LibraryInner() {
     [projectId],
   )
 
-  const loadAssets = useCallback(async (folderId: string) => {
-    const list = await api<Asset[]>(`/v1/folders/${folderId}/assets`)
-    setAssets(list)
+  const loadAssetsPage = useCallback(
+    async (folderId: string, kind: BrowseKind, pageIndex: number) => {
+      const offset = pageIndex * PAGE_SIZE
+      const data = await api<AssetsPage>(
+        `/v1/folders/${folderId}/assets?media_kind=${kind}&limit=${PAGE_SIZE}&offset=${offset}`,
+      )
+      setAssets(data.items)
+      setTotal(data.total)
+      setPage(pageIndex)
+    },
+    [],
+  )
+
+  const loadVideoJobs = useCallback(async (videoId: string) => {
+    const jobs = await api<ExtractJob[]>(`/v1/assets/${videoId}/extract-jobs`)
+    setVideoJobs(jobs)
+    return jobs
   }, [])
+
+  const openExtractJob = useCallback(async (job: ExtractJob) => {
+    setExtractJob(job)
+    localStorage.setItem(EXTRACT_KEY, job.id)
+    setSelected(new Set())
+    if (job.status === 'succeeded') {
+      const fr = await api<FrameCandidate[]>(`/v1/extract-jobs/${job.id}/frames`)
+      setFrames(fr)
+    } else {
+      setFrames([])
+    }
+  }, [])
+
+  const selectVideo = useCallback(
+    async (video: Asset) => {
+      setSelectedVideo(video)
+      setSelectedImage(null)
+      setFrames([])
+      setSelected(new Set())
+      try {
+        const jobs = await loadVideoJobs(video.id)
+        const savedId = localStorage.getItem(EXTRACT_KEY)
+        const preferred =
+          (savedId && jobs.find((j) => j.id === savedId)) || jobs[0] || null
+        if (preferred) await openExtractJob(preferred)
+        else {
+          setExtractJob(null)
+          setVideoJobs(jobs)
+        }
+      } catch (e) {
+        setError(formatError(e))
+      }
+    },
+    [loadVideoJobs, openExtractJob],
+  )
 
   const enterFolder = useCallback(
     async (next: Folder | null, nextTrail: Folder[]) => {
       setFolder(next)
       setTrail(nextTrail)
       setSelectedVideo(null)
+      setSelectedImage(null)
       setAssets([])
+      setTotal(0)
+      setPage(0)
+      setExtractJob(null)
+      setFrames([])
+      setVideoJobs([])
       if (next) {
         localStorage.setItem(FOLDER_KEY, next.id)
         const [kids] = await Promise.all([
           loadChildren(next.id),
-          loadAssets(next.id),
+          loadAssetsPage(next.id, browseKind, 0),
         ])
         setChildFolders(kids)
       } else {
@@ -64,7 +137,7 @@ function LibraryInner() {
         setChildFolders(await loadChildren(null))
       }
     },
-    [loadAssets, loadChildren],
+    [browseKind, loadAssetsPage, loadChildren],
   )
 
   useEffect(() => {
@@ -80,6 +153,22 @@ function LibraryInner() {
         setTrail([])
         setAssets([])
 
+        try {
+          const dsList = await api<Dataset[]>(
+            `/v1/projects/${projectId}/datasets`,
+          )
+          if (!cancelled) {
+            setDatasets(dsList)
+            setTargetDatasetId((prev) =>
+              prev && dsList.some((d) => d.id === prev)
+                ? prev
+                : dsList[0]?.id || '',
+            )
+          }
+        } catch {
+          /* 数据集列表失败不阻塞素材库 */
+        }
+
         const savedId = localStorage.getItem(FOLDER_KEY)
         if (savedId) {
           try {
@@ -93,24 +182,6 @@ function LibraryInner() {
             localStorage.removeItem(FOLDER_KEY)
           }
         }
-
-        const lastId = localStorage.getItem(EXTRACT_KEY)
-        if (lastId) {
-          try {
-            const job = await api<ExtractJob>(`/v1/extract-jobs/${lastId}`)
-            if (!cancelled && job.project_id === projectId) {
-              setExtractJob(job)
-              if (job.status === 'succeeded') {
-                const fr = await api<FrameCandidate[]>(
-                  `/v1/extract-jobs/${lastId}/frames`,
-                )
-                if (!cancelled) setFrames(fr)
-              }
-            }
-          } catch {
-            localStorage.removeItem(EXTRACT_KEY)
-          }
-        }
       } catch (e) {
         if (!cancelled) setError(formatError(e))
       } finally {
@@ -120,9 +191,38 @@ function LibraryInner() {
     return () => {
       cancelled = true
     }
-    // 仅项目切换时重载；enterFolder 稳定用于恢复已选目录
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
+
+  const switchBrowseKind = async (kind: BrowseKind) => {
+    if (kind === browseKind || !folder) {
+      setBrowseKind(kind)
+      return
+    }
+    setBrowseKind(kind)
+    setSelectedVideo(null)
+    setSelectedImage(null)
+    setBusy(true)
+    try {
+      await loadAssetsPage(folder.id, kind, 0)
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const goPage = async (nextPage: number) => {
+    if (!folder || nextPage < 0 || nextPage >= pageCount) return
+    setBusy(true)
+    try {
+      await loadAssetsPage(folder.id, browseKind, nextPage)
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const createFolder = async () => {
     const name = newFolderName.trim()
@@ -199,8 +299,9 @@ function LibraryInner() {
         method: 'PATCH',
         body: JSON.stringify({ filename }),
       })
-      if (folder) await loadAssets(folder.id)
+      if (folder) await loadAssetsPage(folder.id, browseKind, page)
       if (selectedVideo?.id === updated.id) setSelectedVideo(updated)
+      if (selectedImage?.id === updated.id) setSelectedImage(updated)
       setMessage(`已重命名：${updated.filename}`)
     } catch (e) {
       setError(formatError(e))
@@ -237,8 +338,14 @@ function LibraryInner() {
           nImg += 1
         }
       }
-      await loadAssets(folder.id)
-      if (lastVideo) setSelectedVideo(lastVideo)
+      const prefer: BrowseKind = nVid > 0 && nImg === 0 ? 'video' : nImg > 0 && nVid === 0 ? 'image' : browseKind
+      setBrowseKind(prefer)
+      await loadAssetsPage(folder.id, prefer, 0)
+      if (lastVideo) {
+        setBrowseKind('video')
+        await loadAssetsPage(folder.id, 'video', 0)
+        await selectVideo(lastVideo)
+      }
       const parts: string[] = []
       if (nImg) parts.push(`${nImg} 张图片`)
       if (nVid) parts.push(`${nVid} 个视频`)
@@ -272,6 +379,7 @@ function LibraryInner() {
       setExtractJob(job)
       localStorage.setItem(EXTRACT_KEY, job.id)
       await pollExtract(job.id)
+      await loadVideoJobs(selectedVideo.id)
     } catch (e) {
       setError(formatError(e))
       setMessage(null)
@@ -287,7 +395,7 @@ function LibraryInner() {
       if (job.status === 'succeeded') {
         const fr = await api<FrameCandidate[]>(`/v1/extract-jobs/${id}/frames`)
         setFrames(fr)
-        setMessage(`抽帧完成，共 ${fr.length} 帧（按时间升序）`)
+        setMessage(`抽帧完成，共 ${fr.length} 帧（按时间升序；不进入目录列表）`)
         return
       }
       if (job.status === 'failed') {
@@ -336,8 +444,30 @@ function LibraryInner() {
     }
   }
 
-  const videos = assets.filter((a) => a.media_kind === 'video')
-  const images = assets.filter((a) => a.media_kind === 'image')
+  const addCurrentJobToDataset = async () => {
+    if (!extractJob || !targetDatasetId || frames.length === 0) return
+    setBusy(true)
+    setError(null)
+    try {
+      const added = await api<{ asset_id: string }[]>(
+        `/v1/datasets/${targetDatasetId}/assets/from-extract`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            extract_job_id: extractJob.id,
+            split: 'unassigned',
+          }),
+        },
+      )
+      const dsName =
+        datasets.find((d) => d.id === targetDatasetId)?.name || '数据集'
+      setMessage(`已将当前任务 ${added.length} 帧加入「${dsName}」`)
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   if (loading) return <LoadingBlock />
 
@@ -346,7 +476,9 @@ function LibraryInner() {
       <div className="lt-page-head">
         <div>
           <h1>素材库</h1>
-          <p>先建/选目录，再上传视频 → 抽帧 → 按时间审查删帧，再加入数据集。</p>
+          <p>
+            目录归档源素材（视频 / 上传图，分页浏览）。抽帧图只在所选视频的任务下审查，不进目录列表。
+          </p>
         </div>
         <label
           className="lt-btn lt-btn-primary"
@@ -389,7 +521,14 @@ function LibraryInner() {
           alignItems: 'center',
         }}
       >
-        <nav style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+        <nav
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 4,
+            alignItems: 'center',
+          }}
+        >
           <button
             type="button"
             className="lt-btn lt-btn-ghost"
@@ -398,7 +537,10 @@ function LibraryInner() {
             根目录
           </button>
           {trail.map((f, i) => (
-            <span key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <span
+              key={f.id}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+            >
               <span className="lt-muted">/</span>
               <button
                 type="button"
@@ -439,23 +581,25 @@ function LibraryInner() {
         ) : null}
       </div>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(220px, 280px) 1fr',
-          gap: '1rem',
-          alignItems: 'start',
-        }}
-      >
-        <section className="lt-panel" style={{ padding: '0.85rem' }}>
-          <h2 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem' }}>
-            {folder ? '子目录与素材' : '目录'}
-          </h2>
-
-          {childFolders.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+      <div className="lt-library-layout">
+        <section className="lt-panel lt-library-dirs">
+          <h2 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem' }}>子目录</h2>
+          {childFolders.length === 0 ? (
+            <StateBlock
+              title={folder ? '无子目录' : '还没有目录'}
+              description={
+                folder
+                  ? '可在上方新建子目录，或直接上传到当前目录。'
+                  : '按规格须先创建目录，再上传素材。'
+              }
+            />
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {childFolders.map((f) => (
-                <div key={f.id} style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
+                <div
+                  key={f.id}
+                  style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}
+                >
                   <button
                     type="button"
                     className="lt-btn"
@@ -464,12 +608,31 @@ function LibraryInner() {
                       justifyContent: 'flex-start',
                       height: 'auto',
                       padding: '0.55rem 0.65rem',
+                      minWidth: 0,
                     }}
                     onClick={() => void enterFolder(f, [...trail, f])}
                   >
-                    <span style={{ textAlign: 'left' }}>
-                      <div style={{ fontWeight: 600 }}>{f.name}</div>
-                      <div className="mono" style={{ fontSize: 11, color: 'var(--lt-fg-subtle)' }}>
+                    <span style={{ textAlign: 'left', minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontWeight: 600,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {f.name}
+                      </div>
+                      <div
+                        className="mono"
+                        style={{
+                          fontSize: 11,
+                          color: 'var(--lt-fg-subtle)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
                         {f.path}
                       </div>
                     </span>
@@ -486,250 +649,383 @@ function LibraryInner() {
                 </div>
               ))}
             </div>
-          ) : null}
+          )}
+        </section>
 
+        <section className="lt-panel lt-library-browse">
           {!folder ? (
             <StateBlock
-              title={childFolders.length === 0 ? '还没有目录' : '请选择目录'}
-              description={
-                childFolders.length === 0
-                  ? '按规格须先创建目录，再上传素材到该目录。'
-                  : '点左侧/上方目录进入后才能上传。'
-              }
+              title="请选择目录"
+              description="点左侧子目录或上方面包屑进入后，即可分页浏览视频与上传图片。"
             />
           ) : (
             <>
-              <h2 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem' }}>视频</h2>
-              {videos.length === 0 ? (
-                <StateBlock
-                  title="暂无视频"
-                  description="上传 mp4 / mov 等到当前目录后开始抽帧。"
-                />
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {videos.map((v) => (
-                    <div
-                      key={v.id}
-                      style={{ display: 'flex', gap: 6, minWidth: 0, width: '100%' }}
-                    >
-                      <button
-                        type="button"
-                        className="lt-btn"
-                        title={v.filename}
-                        style={{
-                          flex: 1,
-                          minWidth: 0,
-                          justifyContent: 'flex-start',
-                          height: 'auto',
-                          padding: '0.45rem 0.55rem',
-                          gap: 8,
-                          background:
-                            selectedVideo?.id === v.id
-                              ? 'var(--lt-accent-soft)'
-                              : undefined,
-                        }}
-                        onClick={() => setSelectedVideo(v)}
-                      >
-                        {selectedVideo?.id === v.id ? (
-                          <AuthVideoThumb assetId={v.id} />
-                        ) : (
-                          <div
-                            aria-hidden
-                            style={{
-                              width: 72,
-                              height: 48,
-                              flexShrink: 0,
-                              borderRadius: 4,
-                              background: 'var(--lt-bg-canvas)',
-                              display: 'grid',
-                              placeItems: 'center',
-                              fontSize: 11,
-                              color: 'var(--lt-fg-subtle)',
-                            }}
-                          >
-                            ▶
-                          </div>
-                        )}
-                        <span
-                          style={{
-                            textAlign: 'left',
-                            minWidth: 0,
-                            flex: 1,
-                            overflow: 'hidden',
-                          }}
-                        >
-                          <div
-                            style={{
-                              fontWeight: 600,
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {v.filename}
-                          </div>
-                          <div
-                            className="mono"
-                            style={{ fontSize: 11, color: 'var(--lt-fg-subtle)' }}
-                          >
-                            {v.duration_ms != null
-                              ? `${(v.duration_ms / 1000).toFixed(1)}s`
-                              : '—'}
-                            {v.fps != null ? ` · ${v.fps.toFixed(1)} fps` : ''}
-                          </div>
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        className="lt-btn"
-                        disabled={busy}
-                        style={{ flexShrink: 0 }}
-                        onClick={() => void renameAsset(v)}
-                      >
-                        改名
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {selectedVideo ? (
-                <div style={{ marginTop: '1rem', display: 'grid', gap: 10 }}>
-                  <div>
-                    <div
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 600,
-                        marginBottom: 6,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                      title={selectedVideo.filename}
-                    >
-                      预览 · {selectedVideo.filename}
-                    </div>
-                    <AuthVideo assetId={selectedVideo.id} />
-                  </div>
-                  <label style={{ fontSize: 12, color: 'var(--lt-fg-muted)' }}>
-                    抽帧步长（帧）
-                    <input
-                      className="lt-input"
-                      type="number"
-                      min={1}
-                      value={stride}
-                      onChange={(e) => setStride(Number(e.target.value) || 1)}
-                      style={{ marginTop: 4, maxWidth: '100%' }}
-                    />
-                  </label>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 8,
+                  alignItems: 'center',
+                  marginBottom: '0.75rem',
+                }}
+              >
+                <div className="lt-seg">
                   <button
                     type="button"
-                    className="lt-btn lt-btn-primary"
-                    disabled={busy}
-                    onClick={() => void startExtract()}
+                    className={
+                      browseKind === 'video' ? 'lt-seg-item active' : 'lt-seg-item'
+                    }
+                    onClick={() => void switchBrowseKind('video')}
                   >
-                    开始抽帧
+                    视频
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      browseKind === 'image' ? 'lt-seg-item active' : 'lt-seg-item'
+                    }
+                    onClick={() => void switchBrowseKind('image')}
+                  >
+                    上传图片
                   </button>
                 </div>
-              ) : null}
+                <span
+                  className="mono"
+                  style={{ fontSize: 12, color: 'var(--lt-fg-subtle)' }}
+                >
+                  共 {total} · 第 {page + 1}/{pageCount} 页
+                </span>
+                <span style={{ flex: 1 }} />
+                <button
+                  type="button"
+                  className="lt-btn"
+                  disabled={busy || page <= 0}
+                  onClick={() => void goPage(page - 1)}
+                >
+                  上一页
+                </button>
+                <button
+                  type="button"
+                  className="lt-btn"
+                  disabled={busy || page + 1 >= pageCount}
+                  onClick={() => void goPage(page + 1)}
+                >
+                  下一页
+                </button>
+              </div>
 
-              {images.length > 0 ? (
-                <>
-                  <h2 style={{ margin: '1.25rem 0 0.5rem', fontSize: '0.95rem' }}>
-                    上传图片
-                  </h2>
-                  <div className="lt-thumb-grid">
-                    {images.map((img) => (
-                      <div key={img.id} className="lt-thumb" style={{ position: 'relative' }}>
-                        <AuthImage assetId={img.id} alt={img.filename} />
-                        <div className="lt-thumb-meta">{img.filename}</div>
+              {assets.length === 0 ? (
+                <StateBlock
+                  title={browseKind === 'video' ? '暂无视频' : '暂无上传图片'}
+                  description={
+                    browseKind === 'video'
+                      ? '上传 mp4 / mov 等到当前目录。抽帧产生的图不会出现在这里。'
+                      : '上传图片到当前目录；抽帧帧请在右侧视频任务中查看。'
+                  }
+                />
+              ) : (
+                <div className="lt-media-grid">
+                  {assets.map((a) => {
+                    const isActive =
+                      (a.media_kind === 'video' && selectedVideo?.id === a.id) ||
+                      (a.media_kind === 'image' && selectedImage?.id === a.id)
+                    return (
+                      <div
+                        key={a.id}
+                        className={`lt-media-card${isActive ? ' selected' : ''}`}
+                      >
                         <button
                           type="button"
-                          className="lt-btn"
-                          disabled={busy}
-                          style={{
-                            position: 'absolute',
-                            top: 4,
-                            right: 4,
-                            height: 24,
-                            padding: '0 6px',
-                            fontSize: 11,
+                          className="lt-media-card-main"
+                          title={a.filename}
+                          onClick={() => {
+                            if (a.media_kind === 'video') void selectVideo(a)
+                            else {
+                              setSelectedImage(a)
+                              setSelectedVideo(null)
+                              setExtractJob(null)
+                              setFrames([])
+                            }
                           }}
-                          onClick={() => void renameAsset(img)}
+                        >
+                          <div className="lt-media-card-thumb">
+                            {a.media_kind === 'video' ? (
+                              <AuthVideoThumb
+                                assetId={a.id}
+                                className="lt-media-card-thumb-fill"
+                              />
+                            ) : (
+                              <AuthImage assetId={a.id} alt={a.filename} />
+                            )}
+                          </div>
+                          <div className="lt-media-card-meta">
+                            <div className="lt-media-card-name">{a.filename}</div>
+                            <div className="mono lt-media-card-sub">
+                              {a.media_kind === 'video'
+                                ? a.duration_ms != null
+                                  ? `${(a.duration_ms / 1000).toFixed(1)}s`
+                                  : '视频'
+                                : a.width && a.height
+                                  ? `${a.width}×${a.height}`
+                                  : '图片'}
+                              {a.media_kind === 'video' && a.fps != null
+                                ? ` · ${a.fps.toFixed(1)} fps`
+                                : ''}
+                            </div>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          className="lt-btn lt-media-card-rename"
+                          disabled={busy}
+                          onClick={() => void renameAsset(a)}
                         >
                           改名
                         </button>
                       </div>
-                    ))}
-                  </div>
-                </>
-              ) : null}
+                    )
+                  })}
+                </div>
+              )}
             </>
           )}
         </section>
 
-        <section className="lt-panel" style={{ padding: '0.85rem' }}>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: '0.75rem',
-              marginBottom: '0.75rem',
-              flexWrap: 'wrap',
-            }}
-          >
-            <div>
-              <h2 style={{ margin: 0, fontSize: '0.95rem' }}>候选帧审查</h2>
-              <p
-                style={{
-                  margin: '0.2rem 0 0',
-                  color: 'var(--lt-fg-muted)',
-                  fontSize: 13,
-                }}
-              >
-                {extractJob
-                  ? `任务 ${extractJob.status} · 已选 ${selected.size} / ${frames.length}`
-                  : '抽帧完成后在此按时间顺序审查'}
-              </p>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+        <section className="lt-panel lt-library-detail">
+          {selectedVideo ? (
+            <div className="lt-library-detail-stack">
+              <div>
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    marginBottom: 6,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={selectedVideo.filename}
+                >
+                  预览 · {selectedVideo.filename}
+                </div>
+                <AuthVideo assetId={selectedVideo.id} maxHeight={220} />
+              </div>
+
+              <label style={{ fontSize: 12, color: 'var(--lt-fg-muted)' }}>
+                抽帧步长（帧）
+                <input
+                  className="lt-input"
+                  type="number"
+                  min={1}
+                  value={stride}
+                  onChange={(e) => setStride(Number(e.target.value) || 1)}
+                  style={{ marginTop: 4, maxWidth: '100%' }}
+                />
+              </label>
               <button
                 type="button"
-                className="lt-btn lt-btn-danger"
-                disabled={busy || selected.size === 0}
-                onClick={() => void discardSelected()}
+                className="lt-btn lt-btn-primary"
+                disabled={busy}
+                onClick={() => void startExtract()}
               >
-                删除所选
+                开始抽帧
               </button>
-              <Link to="/datasets" className="lt-btn lt-btn-primary">
-                去入集
-              </Link>
-            </div>
-          </div>
 
-          {frames.length === 0 ? (
-            <StateBlock
-              title="暂无候选帧"
-              description="选择视频并抽帧后，帧按时间升序展示，可批量删除未入集帧。"
-            />
-          ) : (
-            <div className="lt-thumb-grid">
-              {frames.map((f) => (
-                <button
-                  key={f.id}
-                  type="button"
-                  className={`lt-thumb${selected.has(f.id) ? ' selected' : ''}`}
-                  onClick={() => toggle(f.id)}
-                  title={f.filename}
-                >
-                  <AuthImage assetId={f.id} alt={f.time_label} />
-                  <div className="lt-thumb-meta">
-                    #{f.frame_index ?? '—'} · {f.time_label}
+              {videoJobs.length > 0 ? (
+                <div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: 'var(--lt-fg-muted)',
+                      marginBottom: 6,
+                    }}
+                  >
+                    该视频的抽帧任务
                   </div>
-                </button>
-              ))}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {videoJobs.map((j) => (
+                      <button
+                        key={j.id}
+                        type="button"
+                        className="lt-btn"
+                        style={{
+                          justifyContent: 'flex-start',
+                          height: 'auto',
+                          padding: '0.4rem 0.55rem',
+                          background:
+                            extractJob?.id === j.id
+                              ? 'var(--lt-accent-soft)'
+                              : undefined,
+                        }}
+                        onClick={() => void openExtractJob(j)}
+                      >
+                        <span style={{ textAlign: 'left', fontSize: 12 }}>
+                          <div className="mono">{j.id.slice(0, 8)}…</div>
+                          <div style={{ color: 'var(--lt-fg-subtle)' }}>
+                            {j.status}
+                            {j.mode === 'stride_frames' && j.stride != null
+                              ? ` · 每 ${j.stride} 帧`
+                              : ''}
+                          </div>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              <div
+                style={{
+                  borderTop: '1px solid var(--lt-border)',
+                  paddingTop: '0.75rem',
+                  marginTop: '0.25rem',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 8,
+                    flexWrap: 'wrap',
+                    marginBottom: 8,
+                  }}
+                >
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: '0.95rem' }}>
+                      候选帧审查
+                    </h2>
+                    <p
+                      style={{
+                        margin: '0.2rem 0 0',
+                        color: 'var(--lt-fg-muted)',
+                        fontSize: 12,
+                      }}
+                    >
+                      {extractJob
+                        ? `任务 ${extractJob.status} · 已选 ${selected.size} / ${frames.length}`
+                        : '抽帧后在此按时间审查（不进左侧目录）'}
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="lt-btn lt-btn-danger"
+                      disabled={busy || selected.size === 0}
+                      onClick={() => void discardSelected()}
+                    >
+                      删除所选
+                    </button>
+                    <Link to="/datasets" className="lt-btn">
+                      多任务入集
+                    </Link>
+                  </div>
+                </div>
+                {frames.length > 0 && extractJob?.status === 'succeeded' ? (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: 8,
+                      alignItems: 'center',
+                      marginBottom: 8,
+                    }}
+                  >
+                    {datasets.length === 0 ? (
+                      <Link to="/datasets" className="lt-btn lt-btn-primary">
+                        先创建数据集再入集
+                      </Link>
+                    ) : (
+                      <>
+                        <select
+                          className="lt-select"
+                          value={targetDatasetId}
+                          onChange={(e) => setTargetDatasetId(e.target.value)}
+                          style={{ maxWidth: 180 }}
+                        >
+                          {datasets.map((d) => (
+                            <option key={d.id} value={d.id}>
+                              {d.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className="lt-btn lt-btn-primary"
+                          disabled={busy || !targetDatasetId}
+                          onClick={() => void addCurrentJobToDataset()}
+                        >
+                          将当前任务剩余帧入集
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ) : null}
+                {frames.length === 0 ? (
+                  <StateBlock
+                    title="暂无候选帧"
+                    description="对该视频抽帧或选择已有任务后，帧按时间升序展示。"
+                  />
+                ) : (
+                  <div className="lt-thumb-grid lt-thumb-grid-compact">
+                    {frames.map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        className={`lt-thumb${selected.has(f.id) ? ' selected' : ''}`}
+                        onClick={() => toggle(f.id)}
+                        title={f.filename}
+                      >
+                        <AuthImage assetId={f.id} alt={f.time_label} />
+                        <div className="lt-thumb-meta">
+                          #{f.frame_index ?? '—'} · {f.time_label}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
+          ) : selectedImage ? (
+            <div>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  marginBottom: 6,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+                title={selectedImage.filename}
+              >
+                预览 · {selectedImage.filename}
+              </div>
+              <div
+                style={{
+                  borderRadius: 8,
+                  overflow: 'hidden',
+                  background: 'var(--lt-bg-canvas)',
+                  maxHeight: 360,
+                }}
+              >
+                <AuthImage assetId={selectedImage.id} alt={selectedImage.filename} />
+              </div>
+              <p
+                style={{
+                  marginTop: 10,
+                  fontSize: 13,
+                  color: 'var(--lt-fg-muted)',
+                }}
+              >
+                上传图片可在数据集页从库勾选加入。抽帧图请选视频后在任务中查看。
+              </p>
+            </div>
+          ) : (
+            <StateBlock
+              title="选择素材"
+              description="在中间网格点选视频以预览并抽帧；点选上传图片可预览。抽帧结果只出现在本栏，不会混进目录封面。"
+            />
           )}
         </section>
       </div>

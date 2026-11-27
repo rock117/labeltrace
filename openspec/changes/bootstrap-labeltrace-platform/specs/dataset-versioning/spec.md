@@ -19,7 +19,11 @@
 
 #### Scenario: 按默认比例随机划分
 - **WHEN** 用户发版并指定比例 0.7 / 0.2 / 0.1（train/val/test）
-- **THEN** 快照中各成员带有 train|val|test，数量大致符合该比例，且无 `unassigned`
+- **THEN** 快照中各成员带有 train|val|test，数量大致符合该比例，且无 `unassigned`；版本元数据保留该次比例、seed 与各划分张数，产品 UI 可展示
+
+#### Scenario: 版本列表展示划分参数
+- **WHEN** 用户查看已发版本列表
+- **THEN** 能看到该版发版时的 train/val/test 比例（或张数）与 seed（若有）
 
 #### Scenario: 固定种子可复现
 - **GIVEN** 同一工作区成员集合
@@ -31,7 +35,7 @@
 - **THEN** 系统拒绝该请求
 
 ### Requirement: 未完成标注不得发版
-系统 MUST 拒绝在「成员未全部提交标注」时发版。判定：数据集须至少有一名成员；每一名成员 MUST 存在对应工作标注且 `status = submitted`（仅有 `draft`、无标注记录或空成员集均不可发版）。
+系统 MUST 拒绝在「成员未全部提交标注」时发版。判定：数据集须至少有一名成员；每一名成员 MUST 存在对应工作标注且 `status = submitted`（仅有 `draft`、无标注记录或空成员集均不可发版）。`submitted` 且 shapes 为空（无目标 / null）SHALL 视为已完成提交，允许发版；不得将「无标注记录」与「空提交负样本」同等对待。
 
 #### Scenario: 仍有未提交成员时发版失败
 - **GIVEN** 数据集有成员，其中至少一名标注状态不是 `submitted`（含尚无标注记录）

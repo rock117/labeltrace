@@ -83,11 +83,15 @@
 - **THEN** 系统返回对应二进制，且不依赖 URL 中的中文或空格路径段
 
 ### Requirement: 按目录列出库可见素材
-系统 SHALL 支持列出某目录下直接包含的、且为素材库可见的素材；默认列表 MUST NOT 包含 `library_visible = false` 的素材。
+系统 SHALL 支持列出某目录下直接包含的、且为素材库可见的素材；默认列表 MUST NOT 包含 `library_visible = false` 的素材。目录列表的主键展示范围 MUST 仅含 `media_kind` 为 `image` 或 `video` 的库可见素材（`frame` MUST NOT 作为目录主列表条目）。系统 SHALL 支持按 `media_kind` 筛选，并支持分页（limit/offset）及总数，以便目录内有成百上千条时按页浏览。
 
 #### Scenario: 浏览目录内容
 - **WHEN** 用户打开某目录
-- **THEN** 系统返回该目录下库可见素材列表
+- **THEN** 系统返回该目录下库可见的 image/video 素材（可分页），不含 frame
+
+#### Scenario: 按类型分页浏览
+- **WHEN** 用户请求某目录下 `media_kind=video`（或 `image`）且带 limit/offset
+- **THEN** 系统仅返回该类型的一页结果，并提供可用于翻页的总数
 
 #### Scenario: 导入隐藏素材不出现在目录浏览
 - **WHEN** 某素材 `library_visible = false` 且 `folder_id` 为空或未挂到用户目录

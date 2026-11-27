@@ -25,10 +25,23 @@ import { appConfirm } from '../store/dialogStore'
 
 const DATASET_KEY = 'labeltrace.datasetId'
 
+type MemberFilter = 'all' | 'none' | 'draft' | 'submitted'
+type MemberAnnStatus = 'submitted' | 'draft' | 'none'
+
 function rectItems(shapes: { items?: { type: string }[] } | null | undefined) {
   return (shapes?.items ?? []).filter(
     (s): s is RectShape => s.type === 'rect',
   )
+}
+
+function shapesKey(items: RectShape[]) {
+  return JSON.stringify(items)
+}
+
+function statusLabel(s: MemberAnnStatus, pending = false): string {
+  if (s === 'submitted') return '已提交'
+  if (s === 'draft') return pending ? '编辑中' : '草稿'
+  return '未标注'
 }
 
 function AnnotateInner() {
@@ -58,7 +71,38 @@ function AnnotateInner() {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [applying, setApplying] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  const [memberFilter, setMemberFilter] = useState<MemberFilter>('all')
   const stripRef = useRef<HTMLDivElement>(null)
+  const baselineKeyRef = useRef('')
+  const shapesRef = useRef<RectShape[]>([])
+  const dirtyRef = useRef(false)
+  const datasetRef = useRef<Dataset | null>(null)
+  const assetRef = useRef<Asset | null>(null)
+  const readOnlyRef = useRef(readOnly)
+
+  useEffect(() => {
+    shapesRef.current = shapes
+  }, [shapes])
+  useEffect(() => {
+    dirtyRef.current = dirty
+  }, [dirty])
+  useEffect(() => {
+    datasetRef.current = dataset
+  }, [dataset])
+  useEffect(() => {
+    assetRef.current = asset
+  }, [asset])
+  useEffect(() => {
+    readOnlyRef.current = readOnly
+  }, [readOnly])
+
+  const markShapes = useCallback((next: RectShape[]) => {
+    setShapes(next)
+    const dirtyNext = shapesKey(next) !== baselineKeyRef.current
+    setDirty(dirtyNext)
+    dirtyRef.current = dirtyNext
+  }, [])
 
   const applyVersionToWorkspace = async () => {
     if (!versionParam || !version) return
@@ -118,6 +162,65 @@ function AnnotateInner() {
     ? version?.name ?? '版本'
     : dataset?.name ?? '数据集'
 
+  const memberStatusAt = useCallback(
+    (i: number): MemberAnnStatus => {
+      if (readOnly) {
+        const s = snapshotEntries[i]?.annotationStatus
+        if (s === 'submitted') return 'submitted'
+        if (s === 'draft') return 'draft'
+        // 快照里有框也视为已有标注，不进「未标注」
+        const items = snapshotEntries[i]?.shapes?.items
+        if (items && items.length > 0) return 'draft'
+        return 'none'
+      }
+      // 当前图：画布上已有框或正在编辑 → 绝不能算「未标注」（列表状态可能滞后）
+      if (i === index && (dirty || shapes.length > 0)) {
+        const s = members[i]?.annotation_status
+        if (s === 'submitted') return 'submitted'
+        return 'draft'
+      }
+      const s = members[i]?.annotation_status
+      if (s === 'submitted') return 'submitted'
+      if (s === 'draft') return 'draft'
+      return 'none'
+    },
+    [members, readOnly, snapshotEntries, dirty, index, shapes.length],
+  )
+
+  const progress = useMemo(() => {
+    const total = members.length
+    let submitted = 0
+    let draft = 0
+    for (let i = 0; i < total; i++) {
+      const s = memberStatusAt(i)
+      if (s === 'submitted') submitted += 1
+      else if (s === 'draft') draft += 1
+    }
+    return {
+      total,
+      submitted,
+      draft,
+      unlabeled: Math.max(0, total - submitted - draft),
+    }
+  }, [members.length, memberStatusAt])
+
+  const filteredMemberIndices = useMemo(() => {
+    return members
+      .map((_, i) => i)
+      .filter((i) => {
+        const s = memberStatusAt(i)
+        if (memberFilter === 'all') return true
+        const matches =
+          (memberFilter === 'none' && s === 'none') ||
+          (memberFilter === 'draft' && s === 'draft') ||
+          (memberFilter === 'submitted' && s === 'submitted')
+        // 仅「编辑中」的当前图临时留在筛选结果里，避免一画框就从「未标」消失；
+        // 一旦已提交/不再匹配，就不再塞进未标注等分组
+        if (i === index && dirty && !readOnly && !matches) return true
+        return matches
+      })
+  }, [members, memberFilter, memberStatusAt, index, dirty, readOnly])
+
   useEffect(() => {
     if (tools.length === 0) return
     if (!tools.some((t) => t.type === activeTool)) {
@@ -152,6 +255,9 @@ function AnnotateInner() {
         setShapes([])
         setLineage(null)
         setImageUrl(null)
+        baselineKeyRef.current = ''
+        setDirty(false)
+        dirtyRef.current = false
         return
       }
       const safe = Math.max(0, Math.min(idx, mem.length - 1))
@@ -168,9 +274,14 @@ function AnnotateInner() {
           api<Asset>(`/v1/assets/${member.asset_id}`),
           api<AssetLineage>(`/v1/assets/${member.asset_id}/lineage`),
         ])
+        const loaded = rectItems(entry?.shapes)
         setAsset(a)
         setLineage(lin)
-        setShapes(rectItems(entry?.shapes))
+        setShapes(loaded)
+        shapesRef.current = loaded
+        baselineKeyRef.current = shapesKey(loaded)
+        setDirty(false)
+        dirtyRef.current = false
         await loadContent(member.asset_id)
         return
       }
@@ -183,9 +294,28 @@ function AnnotateInner() {
         ),
         api<AssetLineage>(`/v1/assets/${member.asset_id}/lineage`),
       ])
+      const loaded = rectItems(ann.shapes)
+      // 与库中真实标注对齐：列表状态可能滞后；有记录/有框时同步到 members
+      const syncedStatus: 'draft' | 'submitted' | null =
+        ann.updated_at != null || loaded.length > 0
+          ? ann.status === 'submitted'
+            ? 'submitted'
+            : 'draft'
+          : null
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.asset_id === member.asset_id
+            ? { ...m, annotation_status: syncedStatus }
+            : m,
+        ),
+      )
       setAsset(a)
       setLineage(lin)
-      setShapes(rectItems(ann.shapes))
+      setShapes(loaded)
+      shapesRef.current = loaded
+      baselineKeyRef.current = shapesKey(loaded)
+      setDirty(false)
+      dirtyRef.current = false
       await loadContent(member.asset_id)
     },
     [setParams, loadContent],
@@ -274,38 +404,112 @@ function AnnotateInner() {
     }
   }, [imageUrl])
 
-  const save = async (status: 'draft' | 'submitted' = 'draft') => {
-    if (readOnly || !dataset || !asset) return
+  const save = async (
+    status: 'draft' | 'submitted' = 'draft',
+    opts?: { silent?: boolean; items?: RectShape[] },
+  ): Promise<boolean> => {
+    if (readOnly || !dataset || !asset) return false
+    const items = opts?.items ?? shapes
     setSaving(true)
     setError(null)
     try {
       await api(`/v1/datasets/${dataset.id}/assets/${asset.id}/annotation`, {
         method: 'PUT',
         body: JSON.stringify({
-          shapes: { format: 'xyxy_abs', items: shapes },
+          shapes: { format: 'xyxy_abs', items },
           status,
         }),
       })
-      setMessage(status === 'submitted' ? '已提交' : '已保存草稿')
+      baselineKeyRef.current = shapesKey(items)
+      setDirty(false)
+      dirtyRef.current = false
+      const aid = asset.id
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.asset_id === aid ? { ...m, annotation_status: status } : m,
+        ),
+      )
+      if (!opts?.silent) {
+        setMessage(
+          status === 'submitted'
+            ? '已提交'
+            : '已保存草稿',
+        )
+      } else if (status === 'submitted') {
+        setMessage('已随切图提交')
+      } else {
+        setMessage('已自动保存草稿')
+      }
+      return true
     } catch (e) {
       setError(formatError(e))
+      return false
     } finally {
       setSaving(false)
     }
   }
 
+  /** 切图：有改动则提交（submitted），无需再点提交。 */
+  const flushOnNavigate = async (): Promise<boolean> => {
+    if (readOnly || !dirtyRef.current) return true
+    if (!dataset || !asset) return true
+    return save('submitted', { silent: true, items: shapesRef.current })
+  }
+
+  /** 关页/刷新：尽力提交未保存改动（与切图一致，免最后一张再点提交）。 */
+  const flushSubmitKeepalive = () => {
+    if (readOnlyRef.current || !dirtyRef.current) return
+    const ds = datasetRef.current
+    const a = assetRef.current
+    if (!ds || !a) return
+    const token = getToken()
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    }
+    if (token) headers.Authorization = `Bearer ${token}`
+    void fetch(`/api/v1/datasets/${ds.id}/assets/${a.id}/annotation`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        shapes: { format: 'xyxy_abs', items: shapesRef.current },
+        status: 'submitted',
+      }),
+      keepalive: true,
+    })
+  }
+
+  useEffect(() => {
+    const onLeave = () => flushSubmitKeepalive()
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!dirtyRef.current || readOnlyRef.current) return
+      flushSubmitKeepalive()
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('pagehide', onLeave)
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => {
+      window.removeEventListener('pagehide', onLeave)
+      window.removeEventListener('beforeunload', onBeforeUnload)
+      // SPA 内跳转离开标注台时 beforeunload 不触发，卸载时补一次
+      flushSubmitKeepalive()
+    }
+  }, [])
+
   const goTo = async (next: number) => {
     if (members.length === 0) return
-    const safe = ((next % members.length) + members.length) % members.length
-    if (safe === index && asset) return
+    if (next < 0 || next >= members.length) return
+    if (next === index && asset) return
     setLoading(true)
     try {
+      const ok = await flushOnNavigate()
+      if (!ok) return
       await showMember({
         dsId: dataset?.id ?? version?.dataset_id ?? null,
         verId: versionParam,
         mem: members,
         entries: snapshotEntries,
-        idx: safe,
+        idx: next,
       })
     } catch (e) {
       setError(formatError(e))
@@ -314,8 +518,120 @@ function AnnotateInner() {
     }
   }
 
+  /** 在当前筛选结果内的位置；不在筛选中则为 -1 */
+  const filterPos = useMemo(
+    () => filteredMemberIndices.indexOf(index),
+    [filteredMemberIndices, index],
+  )
+  const canGoPrevInFilter =
+    filterPos > 0 ||
+    (filterPos < 0 && filteredMemberIndices.some((i) => i < index))
+  const canGoNextInFilter =
+    (filterPos >= 0 && filterPos < filteredMemberIndices.length - 1) ||
+    (filterPos < 0 && filteredMemberIndices.some((i) => i > index))
+
+  /** 上一张/下一张：按当前筛选列表翻，不是全库顺序 */
   const go = async (delta: number) => {
-    await goTo(index + delta)
+    const list = filteredMemberIndices
+    if (list.length === 0) return
+    const pos = list.indexOf(index)
+    if (pos >= 0) {
+      const nextPos = pos + delta
+      if (nextPos < 0 || nextPos >= list.length) return
+      await goTo(list[nextPos])
+      return
+    }
+    // 当前图不在筛选里（例如在「未标」下刚提交）：跳到筛选中相邻一张
+    if (delta > 0) {
+      const next = list.find((i) => i > index)
+      if (next == null) return
+      await goTo(next)
+    } else {
+      let prev: number | undefined
+      for (let k = list.length - 1; k >= 0; k--) {
+        if (list[k] < index) {
+          prev = list[k]
+          break
+        }
+      }
+      if (prev == null) return
+      await goTo(prev)
+    }
+  }
+
+  const goNextUnlabeled = async () => {
+    if (members.length === 0) return
+    for (let i = index + 1; i < members.length; i++) {
+      if (memberStatusAt(i) === 'none') {
+        await goTo(i)
+        return
+      }
+    }
+    for (let i = 0; i < index; i++) {
+      if (memberStatusAt(i) === 'none') {
+        await goTo(i)
+        return
+      }
+    }
+    setMessage('没有未标注的图片了')
+  }
+
+  const submitAllDrafts = async () => {
+    if (readOnly || !dataset) return
+    const draftN = members.filter((m) => m.annotation_status === 'draft').length
+    const dirtyCurrent = dirty
+    if (draftN === 0 && !dirtyCurrent) {
+      setMessage('没有可提交的草稿')
+      return
+    }
+    const ok = await appConfirm({
+      title: '提交全部草稿',
+      description:
+        `将把本数据集中所有草稿标注改为已提交` +
+        (dirtyCurrent ? '（含当前未保存改动，先提交本张）' : '') +
+        `。尚无标注记录的图片不会被创建空标注。`,
+      confirmLabel: '全部提交',
+    })
+    if (!ok) return
+    setSaving(true)
+    setError(null)
+    try {
+      if (dirtyCurrent) {
+        const saved = await save('submitted', {
+          silent: true,
+          items: shapesRef.current,
+        })
+        if (!saved) return
+      }
+      const r = await api<{
+        updated: number
+        already_submitted: number
+        without_annotation: number
+      }>(`/v1/datasets/${dataset.id}/annotations/submit-drafts`, {
+        method: 'POST',
+      })
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.annotation_status === 'draft'
+            ? { ...m, annotation_status: 'submitted' }
+            : m,
+        ),
+      )
+      setMessage(
+        r.updated > 0
+          ? `已提交 ${r.updated} 张草稿` +
+              (r.without_annotation
+                ? `（另有 ${r.without_annotation} 张尚无标注）`
+                : '')
+          : r.without_annotation
+            ? `没有草稿；尚有 ${r.without_annotation} 张未标注`
+            : '没有需要提交的草稿',
+      )
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setSaving(false)
+    }
   }
 
   useEffect(() => {
@@ -326,16 +642,33 @@ function AnnotateInner() {
     )
     if (!el) return
     // 只用胶片条自身滚动；scrollIntoView 会连带滚动画布祖先，导致主图“飞出”视口
-    const left =
-      el.offsetLeft - (strip.clientWidth - el.clientWidth) / 2
-    strip.scrollTo({ left: Math.max(0, left), behavior: 'smooth' })
+    const vertical = strip.scrollHeight > strip.clientHeight + 4
+    if (vertical) {
+      const top =
+        el.offsetTop - (strip.clientHeight - el.clientHeight) / 2
+      strip.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+    } else {
+      const left =
+        el.offsetLeft - (strip.clientWidth - el.clientWidth) / 2
+      strip.scrollTo({ left: Math.max(0, left), behavior: 'smooth' })
+    }
   }, [index])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return
-      if (e.key === 'a' || e.key === 'ArrowLeft') void go(-1)
-      if (e.key === 'd' || e.key === 'ArrowRight') void go(1)
+      if (
+        (e.key === 'a' || e.key === 'ArrowLeft') &&
+        canGoPrevInFilter
+      ) {
+        void go(-1)
+      }
+      if (
+        (e.key === 'd' || e.key === 'ArrowRight') &&
+        canGoNextInFilter
+      ) {
+        void go(1)
+      }
       if (readOnly) return
       if (e.key >= '1' && e.key <= '9') {
         const cls = Number(e.key) - 1
@@ -346,13 +679,25 @@ function AnnotateInner() {
         void save('draft')
       }
       if (e.key === 'Backspace' || e.key === 'Delete') {
-        setShapes((prev) => prev.slice(0, -1))
+        markShapes(shapesRef.current.slice(0, -1))
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataset, version, members, index, shapes, asset, readOnly, classNames])
+  }, [
+    dataset,
+    version,
+    members,
+    index,
+    asset,
+    readOnly,
+    classNames,
+    markShapes,
+    canGoPrevInFilter,
+    canGoNextInFilter,
+    filteredMemberIndices,
+  ])
 
   if (!versionParam && !datasetParam) {
     return (
@@ -407,10 +752,24 @@ function AnnotateInner() {
             <span className="lt-badge" style={{ marginRight: 8 }}>
               {readOnly ? '版本 · 只读' : '工作区 · 可编辑'}
             </span>
-            {titleName} · {index + 1}/{members.length}
+            {titleName}
+            {filterPos >= 0
+              ? ` · 筛选 ${filterPos + 1}/${filteredMemberIndices.length}`
+              : ''}
+            {` · 全局 ${index + 1}/${members.length}`}
             {asset ? ` · ${asset.filename}` : ''}
+            {` · 已提交 ${progress.submitted}`}
+            {progress.draft > 0 ? ` · 草稿 ${progress.draft}` : ''}
+            {progress.unlabeled > 0
+              ? ` · 未标注 ${progress.unlabeled}`
+              : ''}
+            {` / 共 ${progress.total}`}
             {tools.length === 0 ? ' · 无可启用工具' : ' · 检测框'}
-            {!readOnly ? ' · 右侧选类别 → 拖拽画框 → 提交' : ''}
+            {!readOnly
+              ? dirty
+                ? ' · 已画框（编辑中）· 点下一张即提交本张'
+                : ' · 上一张/下一张按当前筛选翻页'
+              : ''}
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -445,29 +804,74 @@ function AnnotateInner() {
               版本
             </Link>
           )}
-          <button type="button" className="lt-btn" disabled={saving} onClick={() => void go(-1)}>
+          <button
+            type="button"
+            className="lt-btn"
+            disabled={saving || loading || !canGoPrevInFilter}
+            title={
+              !canGoPrevInFilter
+                ? '已是当前筛选的第一张'
+                : '按当前筛选（全部/未标/草稿/已提交）翻到上一张'
+            }
+            onClick={() => void go(-1)}
+          >
             上一张
           </button>
-          <button type="button" className="lt-btn" disabled={saving} onClick={() => void go(1)}>
+          <button
+            type="button"
+            className="lt-btn lt-btn-primary"
+            disabled={saving || loading || !canGoNextInFilter}
+            title={
+              !canGoNextInFilter
+                ? '已是当前筛选的最后一张'
+                : '按当前筛选翻到下一张；有改动时会先提交本张'
+            }
+            onClick={() => void go(1)}
+          >
             下一张
           </button>
           {!readOnly ? (
             <>
               <button
                 type="button"
-                className="lt-btn lt-btn-primary"
-                disabled={saving}
+                className="lt-btn"
+                disabled={saving || loading || progress.unlabeled === 0}
+                title="跳到下一张尚未标注的图片"
+                onClick={() => void goNextUnlabeled()}
+              >
+                下一张未标注
+                {progress.unlabeled > 0 ? `（${progress.unlabeled}）` : ''}
+              </button>
+              <button
+                type="button"
+                className="lt-btn"
+                disabled={saving || !dirty}
+                title="中途停手：存为草稿（不算发版就绪）"
                 onClick={() => void save('draft')}
               >
-                保存
+                仅存草稿
               </button>
               <button
                 type="button"
                 className="lt-btn"
                 disabled={saving}
+                title="提交本张并留在当前图"
                 onClick={() => void save('submitted')}
               >
-                提交
+                提交本张
+              </button>
+              <button
+                type="button"
+                className="lt-btn"
+                disabled={
+                  saving ||
+                  (progress.draft === 0 && !dirty)
+                }
+                title="将所有草稿改为已提交；未标注的图片不变"
+                onClick={() => void submitAllDrafts()}
+              >
+                提交全部草稿
+                {progress.draft > 0 ? `（${progress.draft}）` : ''}
               </button>
             </>
           ) : null}
@@ -481,15 +885,81 @@ function AnnotateInner() {
         <p style={{ color: 'var(--lt-success)', marginTop: 0 }}>{message}</p>
       ) : null}
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 220px',
-          gap: '1rem',
-          alignItems: 'start',
-        }}
-      >
-        <div>
+      <div className="lt-annotate-layout">
+        <aside className="lt-filmstrip-wrap" aria-label="全部图片">
+          <div className="lt-filmstrip-head">
+            <span>图片</span>
+            <span
+              className="lt-muted mono"
+              title={`已提交 ${progress.submitted} · 草稿 ${progress.draft} · 未标注 ${progress.unlabeled}`}
+            >
+              {progress.submitted}/{progress.total}
+            </span>
+          </div>
+          <div className="lt-filmstrip-filters" role="tablist" aria-label="按状态筛选">
+            {(
+              [
+                ['all', '全部', progress.total],
+                ['none', '未标', progress.unlabeled],
+                ['draft', '草稿', progress.draft],
+                ['submitted', '已提交', progress.submitted],
+              ] as const
+            ).map(([key, label, count]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={memberFilter === key}
+                className={`lt-filmstrip-filter${memberFilter === key ? ' active' : ''}`}
+                onClick={() => setMemberFilter(key)}
+              >
+                {label}
+                <span className="mono">{count}</span>
+              </button>
+            ))}
+          </div>
+          <div className="lt-filmstrip" ref={stripRef}>
+            {filteredMemberIndices.length === 0 ? (
+              <div className="lt-filmstrip-empty">
+                {memberFilter === 'none'
+                  ? '没有未标注图片'
+                  : memberFilter === 'draft'
+                    ? '没有草稿'
+                    : memberFilter === 'submitted'
+                      ? '没有已提交'
+                      : '暂无图片'}
+              </div>
+            ) : (
+              filteredMemberIndices.map((i) => {
+                const m = members[i]
+                const status = memberStatusAt(i)
+                const pending = dirty && i === index && !readOnly
+                const mark = statusLabel(status, pending)
+                return (
+                  <button
+                    key={m.asset_id}
+                    type="button"
+                    data-member-index={i}
+                    className={`lt-filmstrip-item${i === index ? ' active' : ''}${status === 'none' ? ' unlabeled' : ''}`}
+                    title={`${m.filename} · ${mark}`}
+                    disabled={saving || applying}
+                    onClick={() => void goTo(i)}
+                  >
+                    <AuthImage assetId={m.asset_id} alt={m.filename} />
+                    <span className="lt-filmstrip-idx">{i + 1}</span>
+                    <span
+                      className={`lt-filmstrip-mark${status === 'draft' ? ' draft' : ''}${status === 'none' ? ' none' : ''}${pending ? ' pending' : ''}`}
+                    >
+                      {mark}
+                    </span>
+                  </button>
+                )
+              })
+            )}
+          </div>
+        </aside>
+
+        <div style={{ minWidth: 0 }}>
           {!readOnly && tools.length > 0 ? (
             <div
               style={{
@@ -539,42 +1009,11 @@ function AnnotateInner() {
               activeClass={activeClass}
               activeTool={activeTool}
               readOnly={readOnly}
-              onChange={setShapes}
+              onChange={markShapes}
             />
           ) : (
             <LoadingBlock />
           )}
-
-          <div className="lt-filmstrip-wrap">
-            <div className="lt-filmstrip-head">
-              <span>全部图片</span>
-              <span className="lt-muted">
-                {index + 1} / {members.length}
-              </span>
-            </div>
-            <div className="lt-filmstrip" ref={stripRef}>
-              {members.map((m, i) => {
-                const snapStatus = snapshotEntries[i]?.annotationStatus
-                return (
-                  <button
-                    key={m.asset_id}
-                    type="button"
-                    data-member-index={i}
-                    className={`lt-filmstrip-item${i === index ? ' active' : ''}`}
-                    title={m.filename}
-                    disabled={saving || applying}
-                    onClick={() => void goTo(i)}
-                  >
-                    <AuthImage assetId={m.asset_id} alt={m.filename} />
-                    <span className="lt-filmstrip-idx">{i + 1}</span>
-                    {readOnly && snapStatus === 'submitted' ? (
-                      <span className="lt-filmstrip-mark">已提交</span>
-                    ) : null}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
         </div>
 
         <aside className="lt-panel" style={{ padding: '0.85rem' }}>
@@ -652,7 +1091,7 @@ function AnnotateInner() {
               className="lt-btn lt-btn-danger"
               style={{ marginTop: 8 }}
               disabled={shapes.length === 0}
-              onClick={() => setShapes((p) => p.slice(0, -1))}
+              onClick={() => markShapes(shapes.slice(0, -1))}
             >
               撤销上一框
             </button>

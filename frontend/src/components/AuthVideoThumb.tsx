@@ -1,109 +1,97 @@
 import { useEffect, useState } from 'react'
-import { useAuthBlobUrl } from '../hooks/useAuthBlobUrl'
+import { getToken } from '../lib/api'
 
 type Props = {
   assetId: string
-  /** 取画面的时间（秒）；默认 1s，不足则取中间 */
-  atSec?: number
   className?: string
   width?: number
   height?: number
 }
 
-/** 从视频截取一帧作为缩略图。 */
+/** 列表封面：请求 /poster（服务端缓存的小图），不下载整段视频。 */
 export function AuthVideoThumb({
   assetId,
-  atSec = 1,
   className,
   width = 72,
   height = 48,
 }: Props) {
-  const { url, error, loading } = useAuthBlobUrl(assetId)
-  const [poster, setPoster] = useState<string | null>(null)
+  const [url, setUrl] = useState<string | null>(null)
+  const [error, setError] = useState(false)
+  const fill = Boolean(className?.includes('lt-media-card-thumb-fill'))
 
   useEffect(() => {
-    if (!url) {
-      setPoster(null)
-      return
-    }
+    let revoked: string | null = null
     let cancelled = false
-    let shot: string | null = null
-    const video = document.createElement('video')
-    video.muted = true
-    video.playsInline = true
-    video.preload = 'auto'
-    video.src = url
-
-    const fail = () => {
-      if (!cancelled) setPoster(null)
-    }
-
-    const capture = () => {
+    setError(false)
+    setUrl(null)
+    ;(async () => {
       try {
-        const w = video.videoWidth || 320
-        const h = video.videoHeight || 180
-        const canvas = document.createElement('canvas')
-        canvas.width = w
-        canvas.height = h
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return fail()
-        ctx.drawImage(video, 0, 0)
-        shot = canvas.toDataURL('image/jpeg', 0.72)
-        if (!cancelled) setPoster(shot)
+        const token = getToken()
+        const headers: HeadersInit = {}
+        if (token) headers.Authorization = `Bearer ${token}`
+        const res = await fetch(`/api/v1/assets/${assetId}/poster`, { headers })
+        if (!res.ok) throw new Error(String(res.status))
+        const blob = await res.blob()
+        if (cancelled) return
+        const objectUrl = URL.createObjectURL(blob)
+        revoked = objectUrl
+        setUrl(objectUrl)
       } catch {
-        fail()
+        if (!cancelled) setError(true)
       }
-    }
-
-    const onMeta = () => {
-      const dur = Number.isFinite(video.duration) ? video.duration : 0
-      const t =
-        dur > 0 ? Math.min(Math.max(atSec, 0.05), Math.max(dur * 0.1, 0.05)) : atSec
-      const onSeeked = () => {
-        video.removeEventListener('seeked', onSeeked)
-        capture()
-      }
-      video.addEventListener('seeked', onSeeked)
-      try {
-        video.currentTime = t
-      } catch {
-        // 部分编码无法 seek，直接抓第 0 帧
-        capture()
-      }
-    }
-
-    video.addEventListener('loadedmetadata', onMeta)
-    video.addEventListener('error', fail)
-
+    })()
     return () => {
       cancelled = true
-      video.removeEventListener('loadedmetadata', onMeta)
-      video.removeEventListener('error', fail)
-      video.src = ''
-      video.load()
+      if (revoked) URL.revokeObjectURL(revoked)
     }
-  }, [url, atSec])
+  }, [assetId])
 
-  const box = {
-    width,
-    height,
-    flexShrink: 0,
-    borderRadius: 4,
-    overflow: 'hidden' as const,
-    background: 'var(--lt-bg-canvas)',
-    objectFit: 'cover' as const,
-  }
+  const box = fill
+    ? {
+        width: '100%' as const,
+        height: '100%' as const,
+        objectFit: 'cover' as const,
+        display: 'block' as const,
+      }
+    : {
+        width,
+        height,
+        flexShrink: 0,
+        borderRadius: 4,
+        overflow: 'hidden' as const,
+        background: 'var(--lt-bg-canvas)',
+        objectFit: 'cover' as const,
+      }
 
   if (error) {
-    return <div className={className} style={box} title="缩略图失败" />
+    return (
+      <div
+        className={className}
+        style={{
+          ...box,
+          display: 'grid',
+          placeItems: 'center',
+          fontSize: 11,
+          color: 'var(--lt-fg-subtle)',
+          background: 'var(--lt-bg-canvas)',
+        }}
+      >
+        ▶
+      </div>
+    )
   }
-  if (loading || !poster) {
-    return <div className={className} style={box} />
+  if (!url) {
+    return (
+      <div
+        className={className}
+        style={{ ...box, background: 'var(--lt-bg-canvas)' }}
+      />
+    )
   }
   return (
     <img
       className={className}
-      src={poster}
+      src={url}
       alt=""
       style={box}
       draggable={false}

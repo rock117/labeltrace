@@ -308,10 +308,36 @@ function VersionsInner() {
                   </button>
                 </div>
               </div>
+              {(() => {
+                const split = v.change_summary?.split
+                const ratios = split?.ratios
+                const counts = split?.counts
+                if (!ratios && !counts && split?.seed == null) return null
+                const fmt = (n: number | undefined) =>
+                  n == null ? '—' : `${Math.round(n * 100)}%`
+                return (
+                  <p
+                    style={{
+                      margin: '0.65rem 0 0',
+                      fontSize: 13,
+                      color: 'var(--lt-fg-muted)',
+                    }}
+                  >
+                    划分
+                    {ratios
+                      ? ` train ${fmt(ratios.train)} / val ${fmt(ratios.val)} / test ${fmt(ratios.test)}`
+                      : ''}
+                    {counts
+                      ? ` · ${counts.train ?? 0}/${counts.val ?? 0}/${counts.test ?? 0} 张`
+                      : ''}
+                    {` · seed ${split?.seed ?? '—'}`}
+                  </p>
+                )
+              })()}
               {Array.isArray(v.member_sources) && v.member_sources.length > 0 ? (
                 <p
                   style={{
-                    margin: '0.65rem 0 0',
+                    margin: '0.35rem 0 0',
                     fontSize: 13,
                     color: 'var(--lt-fg-subtle)',
                   }}

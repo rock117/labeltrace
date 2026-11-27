@@ -7,15 +7,16 @@ import type {
   DatasetAsset,
   Folder,
   MemberSource,
+  ProjectExtractJob,
 } from '../lib/types'
 import { useAppStore } from '../store/appStore'
 import { formatError } from '../hooks/useAsync'
 import { AuthImage } from '../components/AuthImage'
+import { AuthVideoThumb } from '../components/AuthVideoThumb'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
 import { appConfirm, appPrompt } from '../store/dialogStore'
 
-const EXTRACT_KEY = 'labeltrace.lastExtractJobId'
 const DATASET_KEY = 'labeltrace.datasetId'
 
 async function listAllFolders(projectId: string): Promise<Folder[]> {
@@ -39,6 +40,9 @@ function DatasetsInner() {
   const [libraryFolderId, setLibraryFolderId] = useState('')
   const [libraryImages, setLibraryImages] = useState<Asset[]>([])
   const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [extractJobs, setExtractJobs] = useState<ProjectExtractJob[]>([])
+  const [pickedJobs, setPickedJobs] = useState<Set<string>>(new Set())
+  const [pickedMembers, setPickedMembers] = useState<Set<string>>(new Set())
   const [activeId, setActiveId] = useState<string | null>(
     localStorage.getItem(DATASET_KEY),
   )
@@ -52,18 +56,36 @@ function DatasetsInner() {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
-  const selectDataset = useCallback(async (id: string) => {
-    setActiveId(id)
-    localStorage.setItem(DATASET_KEY, id)
-    const [ds, mem, src] = await Promise.all([
-      api<Dataset>(`/v1/datasets/${id}`),
-      api<DatasetAsset[]>(`/v1/datasets/${id}/assets`),
-      api<MemberSource[]>(`/v1/datasets/${id}/member-sources`),
-    ])
-    setActive(ds)
-    setMembers(mem)
-    setSources(src)
-  }, [])
+  const loadExtractJobs = useCallback(
+    async (datasetId: string | null) => {
+      const q = datasetId ? `?status=succeeded&dataset_id=${datasetId}` : '?status=succeeded'
+      const jobs = await api<ProjectExtractJob[]>(
+        `/v1/projects/${projectId}/extract-jobs${q}`,
+      )
+      setExtractJobs(jobs)
+      setPickedJobs(new Set())
+    },
+    [projectId],
+  )
+
+  const selectDataset = useCallback(
+    async (id: string) => {
+      setActiveId(id)
+      localStorage.setItem(DATASET_KEY, id)
+      const [ds, mem, src] = await Promise.all([
+        api<Dataset>(`/v1/datasets/${id}`),
+        api<DatasetAsset[]>(`/v1/datasets/${id}/assets`),
+        api<MemberSource[]>(`/v1/datasets/${id}/member-sources`),
+      ])
+      setActive(ds)
+      setMembers(mem)
+      setSources(src)
+      setPickedMembers(new Set())
+      await loadExtractJobs(id)
+      return mem
+    },
+    [loadExtractJobs],
+  )
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -88,6 +110,9 @@ function DatasetsInner() {
         setActive(null)
         setMembers([])
         setSources([])
+        setExtractJobs([])
+        setPickedJobs(new Set())
+        setPickedMembers(new Set())
       }
     } catch (e) {
       setError(formatError(e))
@@ -129,28 +154,41 @@ function DatasetsInner() {
     }
   }
 
-  const addFromExtract = async () => {
-    if (!active) return
-    const extractId = localStorage.getItem(EXTRACT_KEY)
-    if (!extractId) {
-      setError('没有最近的抽帧任务，请先在素材库抽帧并审查')
-      return
-    }
+  const toggleJob = (id: string) => {
+    setPickedJobs((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const addFromExtractJobs = async () => {
+    if (!active || pickedJobs.size === 0) return
     setBusy(true)
     setError(null)
     try {
-      const added = await api<DatasetAsset[]>(
-        `/v1/datasets/${active.id}/assets/from-extract`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            extract_job_id: extractId,
-            split: 'unassigned',
-          }),
-        },
+      const before = members.length
+      const jobIds = [...pickedJobs]
+      for (const jobId of jobIds) {
+        await api<DatasetAsset[]>(
+          `/v1/datasets/${active.id}/assets/from-extract`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              extract_job_id: jobId,
+              split: 'unassigned',
+            }),
+          },
+        )
+      }
+      const mem = await selectDataset(active.id)
+      const delta = Math.max(0, mem.length - before)
+      setMessage(
+        delta > 0
+          ? `已从 ${jobIds.length} 个抽帧任务新加入 ${delta} 张帧`
+          : `所选 ${jobIds.length} 个任务无新帧可加（可能已全部在集中或已删光）`,
       )
-      await selectDataset(active.id)
-      setMessage(`已加入审查剩余帧 ${added.length} 张`)
     } catch (e) {
       setError(formatError(e))
     } finally {
@@ -164,8 +202,10 @@ function DatasetsInner() {
       setPicked(new Set())
       return
     }
-    const list = await api<Asset[]>(`/v1/folders/${folderId}/assets`)
-    setLibraryImages(list.filter((a) => a.media_kind === 'image'))
+    const page = await api<{ items: Asset[] }>(
+      `/v1/folders/${folderId}/assets?media_kind=image&limit=200&offset=0`,
+    )
+    setLibraryImages(page.items)
     setPicked(new Set())
   }, [])
 
@@ -216,11 +256,29 @@ function DatasetsInner() {
     }
   }
 
-  const removeMember = async (assetId: string) => {
-    if (!active) return
+  const toggleMember = (assetId: string) => {
+    setPickedMembers((prev) => {
+      const next = new Set(prev)
+      if (next.has(assetId)) next.delete(assetId)
+      else next.add(assetId)
+      return next
+    })
+  }
+
+  const toggleAllMembers = () => {
+    if (pickedMembers.size === members.length) {
+      setPickedMembers(new Set())
+      return
+    }
+    setPickedMembers(new Set(members.map((m) => m.asset_id)))
+  }
+
+  const removeSelectedMembers = async () => {
+    if (!active || pickedMembers.size === 0) return
+    const n = pickedMembers.size
     const ok = await appConfirm({
-      title: '移出数据集成员',
-      description: '从数据集移出该素材？不会删除素材库中的文件。',
+      title: '批量移出成员',
+      description: `从数据集移出已选 ${n} 张？不会删除素材库或抽帧文件。`,
       confirmLabel: '移出',
       danger: true,
     })
@@ -228,11 +286,13 @@ function DatasetsInner() {
     setBusy(true)
     setError(null)
     try {
-      await api(`/v1/datasets/${active.id}/assets/${assetId}`, {
-        method: 'DELETE',
-      })
+      for (const assetId of pickedMembers) {
+        await api(`/v1/datasets/${active.id}/assets/${assetId}`, {
+          method: 'DELETE',
+        })
+      }
       await selectDataset(active.id)
-      setMessage('已从数据集移出')
+      setMessage(`已移出 ${n} 张`)
     } catch (e) {
       setError(formatError(e))
     } finally {
@@ -274,7 +334,7 @@ function DatasetsInner() {
         <div>
           <h1>数据集</h1>
           <p>
-            图片/视频请在素材库上传；本页只从库勾选入集或加入抽帧剩余帧 → 标注 → 发版。
+            图片/视频在素材库上传与抽帧审查；本页勾选抽帧任务或库内图片入集 → 标注 → 发版。
           </p>
         </div>
       </div>
@@ -371,16 +431,8 @@ function DatasetsInner() {
                     >
                       重命名
                     </button>
-                    <button
-                      type="button"
-                      className="lt-btn lt-btn-primary"
-                      disabled={busy}
-                      onClick={() => void addFromExtract()}
-                    >
-                      加入审查剩余帧
-                    </button>
                     <Link to="/library" className="lt-btn">
-                      去素材库上传
+                      去素材库
                     </Link>
                     <Link
                       to={`/annotate?dataset=${active.id}`}
@@ -409,7 +461,108 @@ function DatasetsInner() {
                     marginBottom: '0.75rem',
                   }}
                 >
-                  <h3 style={{ margin: 0, fontSize: '0.95rem' }}>从素材库加入</h3>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '0.95rem' }}>
+                      从抽帧任务加入
+                    </h3>
+                    <p
+                      style={{
+                        margin: '0.25rem 0 0',
+                        color: 'var(--lt-fg-muted)',
+                        fontSize: 13,
+                      }}
+                    >
+                      多视频各自审查后，在此勾选任务，将剩余帧批量入集（不进素材库目录列表）。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="lt-btn lt-btn-primary"
+                    disabled={busy || pickedJobs.size === 0}
+                    onClick={() => void addFromExtractJobs()}
+                  >
+                    加入所选任务（{pickedJobs.size}）
+                  </button>
+                </div>
+                {extractJobs.length === 0 ? (
+                  <StateBlock
+                    title="暂无成功的抽帧任务"
+                    description="请先在素材库对视频抽帧并审查，再回到此处勾选任务入集。"
+                  />
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {extractJobs.map((j) => {
+                      const on = pickedJobs.has(j.id)
+                      const inDs = j.in_dataset_count ?? 0
+                      const remain = j.remaining_frame_count
+                      const allIn = remain > 0 && inDs >= remain
+                      return (
+                        <label
+                          key={j.id}
+                          style={{
+                            display: 'flex',
+                            gap: 10,
+                            alignItems: 'center',
+                            padding: '0.55rem 0.65rem',
+                            borderRadius: 'var(--lt-radius)',
+                            border: `1px solid ${on ? 'var(--lt-accent)' : 'var(--lt-border)'}`,
+                            background: on ? 'var(--lt-accent-soft)' : 'transparent',
+                            cursor: remain === 0 ? 'not-allowed' : 'pointer',
+                            opacity: remain === 0 ? 0.55 : 1,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            disabled={remain === 0}
+                            onChange={() => toggleJob(j.id)}
+                          />
+                          <AuthVideoThumb assetId={j.video_asset_id} width={64} height={40} />
+                          <span style={{ flex: 1, minWidth: 0 }}>
+                            <div
+                              style={{
+                                fontWeight: 600,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                              title={j.video_filename || j.video_asset_id}
+                            >
+                              {j.video_filename || '未命名视频'}
+                            </div>
+                            <div
+                              className="mono"
+                              style={{ fontSize: 11, color: 'var(--lt-fg-subtle)' }}
+                            >
+                              {j.mode === 'stride_frames' && j.stride != null
+                                ? `每 ${j.stride} 帧`
+                                : j.mode}
+                              {` · 剩余 ${remain} 帧`}
+                              {j.in_dataset_count != null
+                                ? ` · 已在本集 ${inDs}`
+                                : ''}
+                              {allIn ? ' · 已全部在集' : ''}
+                            </div>
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="lt-panel" style={{ padding: '1rem', marginBottom: '1rem' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    marginBottom: '0.75rem',
+                  }}
+                >
+                  <h3 style={{ margin: 0, fontSize: '0.95rem' }}>从素材库加入图片</h3>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                     {folders.length === 0 ? (
                       <Link to="/library" className="lt-btn">
@@ -482,7 +635,10 @@ function DatasetsInner() {
                   来源摘要
                 </h3>
                 {sources.length === 0 ? (
-                  <StateBlock title="尚无成员" description="上方从素材库勾选图片加入，或抽帧入集 / 上传新图。" />
+                  <StateBlock
+                    title="尚无成员"
+                    description="勾选上方抽帧任务加入剩余帧，或从素材库勾选上传图片。"
+                  />
                 ) : (
                   <div style={{ display: 'grid', gap: 8 }}>
                     {sources.map((s, i) => (
@@ -522,9 +678,60 @@ function DatasetsInner() {
               </div>
 
               <div className="lt-panel" style={{ padding: '1rem' }}>
-                <h3 style={{ margin: '0 0 0.35rem', fontSize: '0.95rem' }}>
-                  成员（{members.length}）
-                </h3>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    marginBottom: '0.35rem',
+                  }}
+                >
+                  <h3 style={{ margin: 0, fontSize: '0.95rem' }}>
+                    成员（{members.length}）
+                    {pickedMembers.size > 0
+                      ? ` · 已选 ${pickedMembers.size}`
+                      : ''}
+                  </h3>
+                  {members.length > 0 ? (
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        className="lt-btn"
+                        disabled={busy}
+                        onClick={toggleAllMembers}
+                      >
+                        {pickedMembers.size === members.length
+                          ? '取消全选'
+                          : '全选'}
+                      </button>
+                      <button
+                        type="button"
+                        className="lt-btn lt-btn-danger"
+                        disabled={busy || pickedMembers.size === 0}
+                        onClick={() => void removeSelectedMembers()}
+                      >
+                        移出所选（{pickedMembers.size}）
+                      </button>
+                      {pickedMembers.size === 1 ? (
+                        <Link
+                          to={`/annotate?dataset=${active.id}&asset=${[...pickedMembers][0]}`}
+                          className="lt-btn"
+                        >
+                          标注所选
+                        </Link>
+                      ) : (
+                        <Link
+                          to={`/annotate?dataset=${active.id}`}
+                          className="lt-btn"
+                        >
+                          打开标注台
+                        </Link>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
                 <p
                   style={{
                     margin: '0 0 0.75rem',
@@ -532,44 +739,30 @@ function DatasetsInner() {
                     fontSize: 13,
                   }}
                 >
-                  划分在发版时按比例随机指定；工作区不展示未分配状态。
+                  点击缩略图多选后批量移出（只删引用）。划分在发版时指定。
                 </p>
                 {members.length === 0 ? (
                   <StateBlock
                     title="空数据集"
-                    description="请在素材库上传后，在下方从库勾选加入，或加入抽帧剩余帧。"
+                    description="勾选抽帧任务加入剩余帧，或从素材库勾选上传图片。"
                   />
                 ) : (
                   <div className="lt-thumb-grid">
-                    {members.map((m) => (
-                      <div key={m.asset_id} className="lt-thumb" style={{ position: 'relative' }}>
-                        <Link
-                          to={`/annotate?dataset=${active.id}&asset=${m.asset_id}`}
+                    {members.map((m) => {
+                      const on = pickedMembers.has(m.asset_id)
+                      return (
+                        <button
+                          key={m.asset_id}
+                          type="button"
+                          className={`lt-thumb${on ? ' selected' : ''}`}
                           title={m.filename}
-                          style={{ display: 'block', color: 'inherit' }}
+                          onClick={() => toggleMember(m.asset_id)}
                         >
                           <AuthImage assetId={m.asset_id} alt={m.filename} />
                           <div className="lt-thumb-meta">{m.filename}</div>
-                        </Link>
-                        <button
-                          type="button"
-                          className="lt-btn lt-btn-danger"
-                          disabled={busy}
-                          style={{
-                            position: 'absolute',
-                            top: 4,
-                            right: 4,
-                            height: 24,
-                            padding: '0 6px',
-                            fontSize: 11,
-                          }}
-                          title="从数据集移出"
-                          onClick={() => void removeMember(m.asset_id)}
-                        >
-                          移出
                         </button>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </div>

@@ -77,7 +77,9 @@ def test_upload_image_and_read_content() -> None:
             f"/api/v1/folders/{fid}/assets", headers=_h("up1")
         )
         assert listed.status_code == 200
-        assert any(a["id"] == asset_id for a in listed.json())
+        body = listed.json()
+        assert "items" in body and body["total"] >= 1
+        assert any(a["id"] == asset_id for a in body["items"])
 
 
 def test_dedup_move_and_delete_conflict(monkeypatch) -> None:
@@ -126,12 +128,19 @@ def test_dedup_move_and_delete_conflict(monkeypatch) -> None:
         assert moved.json()["storage_key"] == key1
 
         assert (
-            client.get(f"/api/v1/folders/{f1}/assets", headers=_h("up2")).json()
+            client.get(f"/api/v1/folders/{f1}/assets", headers=_h("up2")).json()[
+                "items"
+            ]
             == []
         )
-        assert len(
-            client.get(f"/api/v1/folders/{f2}/assets", headers=_h("up2")).json()
-        ) == 1
+        assert (
+            len(
+                client.get(
+                    f"/api/v1/folders/{f2}/assets", headers=_h("up2")
+                ).json()["items"]
+            )
+            == 1
+        )
 
         monkeypatch.setattr(
             "app.services.asset_refs.asset_has_references",

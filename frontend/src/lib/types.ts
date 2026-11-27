@@ -29,6 +29,13 @@ export type Asset = {
   extract_job_id: string | null
 }
 
+export type AssetsPage = {
+  items: Asset[]
+  total: number
+  limit: number
+  offset: number
+}
+
 export type ExtractJob = {
   id: string
   project_id: string
@@ -42,6 +49,23 @@ export type ExtractJob = {
   stats: Record<string, unknown>
   error_message: string | null
   created_by: string
+}
+
+/** 项目级抽帧任务（数据集入集用） */
+export type ProjectExtractJob = {
+  id: string
+  project_id: string
+  video_asset_id: string
+  video_filename: string | null
+  mode: string
+  stride: number | null
+  interval_ms: number | null
+  status: string
+  stats: Record<string, unknown>
+  remaining_frame_count: number
+  in_dataset_count: number | null
+  created_by: string
+  created_at: string | null
 }
 
 export type FrameCandidate = {
@@ -67,6 +91,8 @@ export type DatasetAsset = {
   split: string
   media_kind: string
   filename: string
+  /** 工作区标注状态；无记录则为 null/undefined */
+  annotation_status?: 'draft' | 'submitted' | null
 }
 
 export type MemberSource =
@@ -115,6 +141,11 @@ export type Version = {
     added?: number
     removed?: number
     changedAnnotations?: number
+    split?: {
+      seed?: number | null
+      ratios?: { train?: number; val?: number; test?: number }
+      counts?: { train?: number; val?: number; test?: number }
+    }
   } | null
   created_by: string
   note: string | null
