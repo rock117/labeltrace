@@ -28,6 +28,12 @@ class PublishIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=256)
     note: str | None = None
     parent_id: UUID | None = None
+    split_train: float = Field(0.7, ge=0, le=1, alias="splitTrain")
+    split_val: float = Field(0.2, ge=0, le=1, alias="splitVal")
+    split_test: float = Field(0.1, ge=0, le=1, alias="splitTest")
+    split_seed: int | None = Field(None, alias="splitSeed")
+
+    model_config = {"populate_by_name": True}
 
 
 class VersionOut(BaseModel):
@@ -98,6 +104,10 @@ def create_version(
         user_id=user.id,
         note=body.note,
         parent_id=body.parent_id,
+        split_train=body.split_train,
+        split_val=body.split_val,
+        split_test=body.split_test,
+        split_seed=body.split_seed,
     )
     return _out(ver)
 

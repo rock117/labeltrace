@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 from typing import Any
 from uuid import UUID
 
@@ -18,6 +19,72 @@ from app.models.version import DatasetVersion
 from app.services.member_sources import build_member_sources
 
 logger = get_logger("labeltrace.versions")
+
+
+def _normalize_ratios(train: float, val: float, test: float) -> tuple[float, float, float]:
+    total = train + val + test
+    if total <= 0:
+        raise ValidationAppError("划分比例之和须大于 0")
+    if abs(total - 1.0) > 0.02:
+        raise ValidationAppError("train/val/test 比例之和须为 1")
+    return train / total, val / total, test / total
+
+
+def _allocate_counts(n: int, train: float, val: float, test: float) -> dict[str, int]:
+    """按比例分配整数人数，保证合计为 n。"""
+    if n <= 0:
+        return {"train": 0, "val": 0, "test": 0}
+    raw = {
+        "train": train * n,
+        "val": val * n,
+        "test": test * n,
+    }
+    counts = {k: int(v) for k, v in raw.items()}
+    rem = n - sum(counts.values())
+    # 按小数部分从大到小补余数
+    order = sorted(raw.keys(), key=lambda k: (raw[k] - counts[k]), reverse=True)
+    i = 0
+    while rem > 0:
+        counts[order[i % 3]] += 1
+        rem -= 1
+        i += 1
+    return counts
+
+
+def assign_random_splits(
+    db: Session,
+    dataset_id: UUID,
+    *,
+    train: float,
+    val: float,
+    test: float,
+    seed: int | None,
+) -> dict[str, Any]:
+    train, val, test = _normalize_ratios(train, val, test)
+    members = list(
+        db.scalars(
+            select(DatasetAsset).where(DatasetAsset.dataset_id == dataset_id)
+        ).all()
+    )
+    n = len(members)
+    counts = _allocate_counts(n, train, val, test)
+    rng = random.Random(seed)
+    shuffled = list(members)
+    rng.shuffle(shuffled)
+
+    labels: list[str] = (
+        ["train"] * counts["train"]
+        + ["val"] * counts["val"]
+        + ["test"] * counts["test"]
+    )
+    for member, split in zip(shuffled, labels, strict=True):
+        member.split = split
+    db.flush()
+    return {
+        "seed": seed,
+        "ratios": {"train": train, "val": val, "test": test},
+        "counts": counts,
+    }
 
 
 def _classes(db: Session, dataset_id: UUID) -> list[str]:
@@ -135,15 +202,19 @@ def publish_version(
     user_id: str,
     note: str | None = None,
     parent_id: UUID | None = None,
+    split_train: float = 0.7,
+    split_val: float = 0.2,
+    split_test: float = 0.1,
+    split_seed: int | None = None,
 ) -> DatasetVersion:
     ds = db.get(Dataset, dataset_id)
     if ds is None:
         raise NotFoundError("数据集不存在")
-    from app.auth.deps import get_membership
+    from app.auth.deps import OWNER_ROLES, get_membership, has_any_role
 
     m = get_membership(db, ds.project_id, user_id)
-    if m is None or m.role != "admin":
-        raise ForbiddenError("仅管理员可发版")
+    if m is None or not has_any_role(m, OWNER_ROLES):
+        raise ForbiddenError("仅负责人可发版")
 
     _assert_ready_to_publish(db, dataset_id)
 
@@ -161,9 +232,19 @@ def publish_version(
             .limit(1)
         )
 
+    split_meta = assign_random_splits(
+        db,
+        dataset_id,
+        train=split_train,
+        val=split_val,
+        test=split_test,
+        seed=split_seed,
+    )
+
     manifest = _build_manifest(db, dataset_id)
     member_sources = build_member_sources(db, dataset_id)
     summary = _diff_manifests(parent.manifest if parent else None, manifest)
+    summary["split"] = split_meta
 
     ver = DatasetVersion(
         dataset_id=dataset_id,
@@ -181,10 +262,11 @@ def publish_version(
     db.commit()
     db.refresh(ver)
     logger.info(
-        "version_published version_id=%s dataset_id=%s entries=%s",
+        "version_published version_id=%s dataset_id=%s entries=%s split=%s",
         ver.id,
         dataset_id,
         len(manifest.get("entries") or []),
+        split_meta,
     )
     return ver
 
@@ -196,7 +278,7 @@ def apply_version_to_workspace(
     user_id: str,
 ) -> dict[str, int]:
     """将版本快照合并进所属数据集工作区；不修改版本本身。"""
-    from app.auth.deps import WRITE_ROLES, get_membership
+    from app.auth.deps import WRITE_ROLES, get_membership, has_any_role
     from app.models.asset import Asset
 
     ver = db.get(DatasetVersion, version_id)
@@ -206,7 +288,7 @@ def apply_version_to_workspace(
     if ds is None:
         raise NotFoundError("数据集不存在")
     m = get_membership(db, ds.project_id, user_id)
-    if m is None or m.role not in WRITE_ROLES:
+    if m is None or not has_any_role(m, WRITE_ROLES):
         raise ForbiddenError("权限不足")
 
     entries = list((ver.manifest or {}).get("entries") or [])

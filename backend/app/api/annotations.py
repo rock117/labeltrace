@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.annotation.registry import INTERNAL_FORMAT, get_registry
-from app.auth.deps import WRITE_ROLES, CurrentUser, get_current_user, get_membership
+from app.auth.deps import WRITE_ROLES, CurrentUser, get_current_user, get_membership, has_any_role
 from app.core.errors import ForbiddenError, NotFoundError, ValidationAppError
 from app.core.logging import get_logger
 from app.db.session import get_db
@@ -59,7 +59,7 @@ def put_annotation(
     if ds is None:
         raise NotFoundError("数据集不存在")
     m = get_membership(db, ds.project_id, user.id)
-    if m is None or m.role not in WRITE_ROLES:
+    if m is None or not has_any_role(m, WRITE_ROLES):
         raise ForbiddenError("权限不足")
     member = db.get(DatasetAsset, (dataset_id, asset_id))
     if member is None:

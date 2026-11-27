@@ -118,7 +118,8 @@ def test_annotation_isolation_publish_and_lineage() -> None:
         ).json()
         assert g1["shapes"]["items"][0]["bbox"][0] == 1.0
         assert g2["shapes"]["items"][0]["bbox"][0] == 9.0
-        assert g1["updated_by"] == "admin"
+        assert g1["updated_by"]  # 登录用户 id
+
 
         # polygon 拒绝
         bad = client.put(

@@ -1,16 +1,39 @@
-const USER_KEY = 'labeltrace.userId'
+const TOKEN_KEY = 'labeltrace.token'
+const USER_KEY = 'labeltrace.user'
 
-export function getUserId(): string {
-  let id = localStorage.getItem(USER_KEY)
-  if (!id) {
-    id = 'demo-user'
-    localStorage.setItem(USER_KEY, id)
-  }
-  return id
+export type AuthUser = { id: string; username: string }
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY)
 }
 
-export function setUserId(id: string): void {
-  localStorage.setItem(USER_KEY, id.trim() || 'demo-user')
+export function getAuthUser(): AuthUser | null {
+  const raw = localStorage.getItem(USER_KEY)
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as AuthUser
+  } catch {
+    return null
+  }
+}
+
+export function setSession(token: string, user: AuthUser): void {
+  localStorage.setItem(TOKEN_KEY, token)
+  localStorage.setItem(USER_KEY, JSON.stringify(user))
+}
+
+export function clearSession(): void {
+  localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(USER_KEY)
+}
+
+/** @deprecated 兼容旧调用；现用登录会话 */
+export function getUserId(): string {
+  return getAuthUser()?.id ?? ''
+}
+
+export function setUserId(_id: string): void {
+  // no-op：身份由登录会话决定
 }
 
 export class ApiError extends Error {
@@ -31,7 +54,8 @@ export async function api<T = unknown>(
   init: RequestInit = {},
 ): Promise<T> {
   const headers = new Headers(init.headers)
-  headers.set('X-User-Id', getUserId())
+  const token = getToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }

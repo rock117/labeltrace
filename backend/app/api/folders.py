@@ -141,13 +141,13 @@ def rename_folder(
     user: Annotated[CurrentUser, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Folder:
-    from app.auth.deps import get_membership
+    from app.auth.deps import WRITE_ROLES, get_membership, has_any_role
 
     folder = db.get(Folder, folder_id)
     if folder is None:
         raise NotFoundError("目录不存在")
     m = get_membership(db, folder.project_id, user.id)
-    if m is None or m.role not in WRITE_ROLES:
+    if m is None or not has_any_role(m, WRITE_ROLES):
         raise ForbiddenError("权限不足")
 
     name = body.name.strip()

@@ -77,13 +77,5 @@
 - **WHEN** 用户查看已发布版本的来源相关信息
 - **THEN** 仍能获知该版本成员的来源摘要（含抽帧设置若适用），且不因之后工作区变更而改变
 
-### Requirement: 设置划分
-系统 SHALL 允许为每个数据集成员设置划分：`train`、`val`、`test` 或 `unassigned`。产品约定为**标完再划**：入集与标注阶段可保持 `unassigned`；划分宜在标注提交后、发版/导出前完成。系统 MUST 支持单成员修改，并 SHALL 支持对所选成员批量设置同一划分。
-
-#### Scenario: 设为训练集
-- **WHEN** 用户将某素材在数据集中的划分设为 `train`
-- **THEN** 再次读取该成员时划分显示为 `train`
-
-#### Scenario: 批量设置划分
-- **WHEN** 用户选中若干成员并批量设为 `val`
-- **THEN** 这些成员的划分均为 `val`
+### Requirement: 成员划分字段
+系统 SHALL 为每个数据集成员持久化划分字段，取值含 `train`、`val`、`test` 或 `unassigned`。工作区入集默认可为 `unassigned`；**产品主路径在发版时按比例随机写入 train/val/test**（见 dataset-versioning）。工作区 UI MUST NOT 将 `unassigned` 作为面向用户的划分选项或标签展示（避免迷惑）；划分结果以版本快照为准展示。

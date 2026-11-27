@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     job_poll_interval_sec: float = 0.5
     job_lease_sec: int = 300
     log_level: str = "INFO"
+    jwt_secret: str = "labeltrace-dev-secret-change-me"
+    jwt_expire_hours: int = 72
+    # 测试/过渡：允许 X-User-Id 自动建号；生产应设为 false
+    auth_allow_dev_header: bool = True
 
 
 @lru_cache

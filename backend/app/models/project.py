@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -44,7 +45,8 @@ class Membership(Base):
         index=True,
     )
     user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    role: Mapped[str] = mapped_column(String(32), nullable=False)  # admin|annotator|viewer
+    # 同一项目内一人可持有多个角色；权限按并集计算
+    roles: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

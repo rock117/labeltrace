@@ -10,6 +10,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.annotations import router as annotations_router
 from app.api.assets import router as assets_router
+from app.api.auth import router as auth_router
 from app.api.datasets import router as datasets_router
 from app.api.extract import router as extract_router
 from app.api.folders import router as folders_router
@@ -65,6 +66,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router, prefix="/api/v1")
 app.include_router(jobs_router, prefix="/api/v1")
 app.include_router(projects_router, prefix="/api/v1")
 app.include_router(folders_router, prefix="/api/v1")

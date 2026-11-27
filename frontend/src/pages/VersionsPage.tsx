@@ -18,10 +18,17 @@ function VersionsInner() {
   const [versions, setVersions] = useState<Version[]>([])
   const [name, setName] = useState('')
   const [note, setNote] = useState('')
+  const [splitTrain, setSplitTrain] = useState(0.7)
+  const [splitVal, setSplitVal] = useState(0.2)
+  const [splitTest, setSplitTest] = useState(0.1)
+  const [splitSeed, setSplitSeed] = useState(42)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+
+  const splitSum = Math.round((splitTrain + splitVal + splitTest) * 1000) / 1000
+  const splitOk = Math.abs(splitSum - 1) < 0.001
 
   const applyToWorkspace = async (versionId: string, versionName: string) => {
     const ok = await appConfirm({
@@ -81,7 +88,7 @@ function VersionsInner() {
   }, [datasetId, reload])
 
   const publish = async () => {
-    if (!datasetId || !name.trim()) return
+    if (!datasetId || !name.trim() || !splitOk) return
     setBusy(true)
     setError(null)
     setMessage(null)
@@ -93,11 +100,17 @@ function VersionsInner() {
           name: name.trim(),
           note: note.trim() || null,
           parent_id: parent,
+          split_train: splitTrain,
+          split_val: splitVal,
+          split_test: splitTest,
+          split_seed: splitSeed,
         }),
       })
       setName('')
       setNote('')
-      setMessage(`已发版 ${ver.name}（${ver.entry_count} 条）`)
+      setMessage(
+        `已发版 ${ver.name}（${ver.entry_count} 条）· 按 ${splitTrain}/${splitVal}/${splitTest} 随机划分`,
+      )
       await reload(datasetId)
     } catch (e) {
       setError(formatError(e))
@@ -128,7 +141,8 @@ function VersionsInner() {
         <div>
           <h1>版本</h1>
           <p>
-            {dataset?.name ?? '数据集'} · 全部成员须已「提交」标注后方可发版；已发版本可只读查看快照。
+            {dataset?.name ?? '数据集'} · 全部成员须已「提交」标注后方可发版；发版时按比例随机划分
+            train/val/test。
           </p>
         </div>
         <Link to={`/annotate?dataset=${datasetId}`} className="lt-btn">
@@ -159,18 +173,78 @@ function VersionsInner() {
             onChange={(e) => setNote(e.target.value)}
             style={{ maxWidth: 280 }}
           />
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            gap: 8,
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            marginTop: 10,
+          }}
+        >
+          <label style={{ fontSize: 13, color: 'var(--lt-fg-muted)' }}>
+            train
+            <input
+              className="lt-input"
+              type="number"
+              min={0}
+              max={1}
+              step={0.05}
+              value={splitTrain}
+              onChange={(e) => setSplitTrain(Number(e.target.value))}
+              style={{ width: 72, marginLeft: 6 }}
+            />
+          </label>
+          <label style={{ fontSize: 13, color: 'var(--lt-fg-muted)' }}>
+            val
+            <input
+              className="lt-input"
+              type="number"
+              min={0}
+              max={1}
+              step={0.05}
+              value={splitVal}
+              onChange={(e) => setSplitVal(Number(e.target.value))}
+              style={{ width: 72, marginLeft: 6 }}
+            />
+          </label>
+          <label style={{ fontSize: 13, color: 'var(--lt-fg-muted)' }}>
+            test
+            <input
+              className="lt-input"
+              type="number"
+              min={0}
+              max={1}
+              step={0.05}
+              value={splitTest}
+              onChange={(e) => setSplitTest(Number(e.target.value))}
+              style={{ width: 72, marginLeft: 6 }}
+            />
+          </label>
+          <label style={{ fontSize: 13, color: 'var(--lt-fg-muted)' }}>
+            seed
+            <input
+              className="lt-input"
+              type="number"
+              value={splitSeed}
+              onChange={(e) => setSplitSeed(Number(e.target.value))}
+              style={{ width: 80, marginLeft: 6 }}
+            />
+          </label>
           <button
             type="button"
             className="lt-btn lt-btn-primary"
-            disabled={busy || !name.trim()}
+            disabled={busy || !name.trim() || !splitOk}
             onClick={() => void publish()}
           >
             {busy ? '发版中…' : '发布版本'}
           </button>
         </div>
         <p style={{ margin: '0.65rem 0 0', color: 'var(--lt-fg-subtle)', fontSize: 13 }}>
-          父版本：{versions[0]?.name ?? '（首版无父）'} · 未提交完会被拒绝 · YOLO
-          导出可后置
+          父版本：{versions[0]?.name ?? '（首版无父）'} · 比例之和须为 1（当前{' '}
+          {splitSum}
+          {!splitOk ? '，请调整' : ''}）· 未提交完会被拒绝
         </p>
       </div>
 

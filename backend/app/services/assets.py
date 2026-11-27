@@ -170,11 +170,11 @@ def move_asset(
     target = db.get(Folder, target_folder_id)
     if target is None or target.project_id != asset.project_id:
         raise NotFoundError("目标目录不存在")
-    from app.auth.deps import get_membership, WRITE_ROLES
+    from app.auth.deps import WRITE_ROLES, get_membership, has_any_role
     from app.core.errors import ForbiddenError as _Forbidden
 
     m = get_membership(db, asset.project_id, user_id)
-    if m is None or m.role not in WRITE_ROLES:
+    if m is None or not has_any_role(m, WRITE_ROLES):
         raise _Forbidden("权限不足")
 
     old_key = asset.storage_key
@@ -192,13 +192,13 @@ def move_asset(
 
 
 def delete_asset(db: Session, *, asset_id: UUID, user_id: str) -> None:
-    from app.auth.deps import WRITE_ROLES, get_membership
+    from app.auth.deps import WRITE_ROLES, get_membership, has_any_role
     from app.core.errors import ConflictError, ForbiddenError as _Forbidden
     from app.services.asset_refs import asset_has_references
 
     asset = get_asset_for_member(db, asset_id, user_id)
     m = get_membership(db, asset.project_id, user_id)
-    if m is None or m.role not in WRITE_ROLES:
+    if m is None or not has_any_role(m, WRITE_ROLES):
         raise _Forbidden("权限不足")
     if asset_has_references(db, asset.id):
         raise ConflictError("素材仍被数据集或版本引用，禁止硬删")

@@ -1,4 +1,4 @@
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
+import { Link, NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
 import { DialogHost } from '../components/DialogHost'
 import { useAppStore } from '../store/appStore'
 import './shell.css'
@@ -13,11 +13,15 @@ const nav = [
 export function AppShell() {
   const theme = useAppStore((s) => s.theme)
   const flipTheme = useAppStore((s) => s.flipTheme)
-  const userId = useAppStore((s) => s.userId)
-  const setUserId = useAppStore((s) => s.setUserId)
+  const user = useAppStore((s) => s.user)
+  const logout = useAppStore((s) => s.logout)
   const projectName = useAppStore((s) => s.projectName)
   const location = useLocation()
   const onProjects = location.pathname === '/projects'
+
+  if (!user) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />
+  }
 
   return (
     <div className="lt-shell">
@@ -78,15 +82,12 @@ export function AppShell() {
             )}
           </div>
           <div className="lt-topbar-actions">
-            <label className="lt-user-field">
-              <span>用户</span>
-              <input
-                className="lt-input"
-                value={userId}
-                onChange={(e) => setUserId(e.target.value)}
-                title="X-User-Id"
-              />
-            </label>
+            <span className="lt-user-chip" title={user.id}>
+              {user.username}
+            </span>
+            <button type="button" className="lt-btn lt-btn-ghost" onClick={logout}>
+              退出
+            </button>
             <button type="button" className="lt-btn lt-btn-ghost" onClick={flipTheme}>
               {theme === 'light' ? '深色' : '浅色'}
             </button>

@@ -105,7 +105,7 @@ FastAPI（鉴权、领域用例）
 | 实体 | 职责 |
 |------|------|
 | Project | 租户边界 |
-| Membership | 角色：`admin` / `annotator` / `viewer` |
+| Membership | 角色集合：`owner` / `annotator` / `viewer`（一人一项目一条记录，可多角色；跨项目独立） |
 | Folder | 项目内目录树（面向库可见素材） |
 | Asset | 媒体素材；`media_kind`：`image` \| `video` \| `frame`；存储与可见性字段同前；frame 另含 `parent_video_id`、`frame_index` |
 | Tag / AssetTag | 扁平标签 |
@@ -295,7 +295,7 @@ storage_key:      proj/3f2c…/assets/a1b2c3d4e5….jpg
 
 ```text
 projects(id, name, created_at, ...)
-memberships(project_id, user_id, role)
+memberships(project_id, user_id, roles[])
 
 folders(id, project_id, parent_id null, name, path, ...)
 
@@ -439,11 +439,17 @@ P0 默认：**导入到新建数据集**（实现简单）；导入到已有空�
 
 ### D8. 鉴权与角色（P0 摘要）
 
+**账号层**：`users`（username + password_hash）；`POST /auth/register|login` 发 JWT；前端 Bearer。注册 ≠ 进项目。
+
+**项目角色**（membership.roles 集合，权限取并集）：
+
 | 角色 | 允许 |
 |------|------|
-| admin | 全权限含导入、发版、硬删（仍受引用保护） |
-| annotator | 标注；读成员与内容；导入权限可配置（默认仅 admin） |
-| viewer | 只读 |
+| owner（负责人） | 全权限含管成员、导入、发版、硬删（仍受引用保护）；**创建项目者自动获得** |
+| annotator（标注员） | 标注；读成员与内容；可抽帧/入集；不可发版、不可管成员；导入默认仅 owner |
+| viewer（只读） | 只读 |
+
+赋角色方式：项目负责人在成员面板用对方**已注册用户名**邀请并勾选角色。一人可跨多项目；同一项目可多角色。
 
 ### D9. Docker 部署与后台任务扩展
 
@@ -560,10 +566,10 @@ services:
 1. **项目 / 总览** — 入口与最近数据集/任务  
 2. **素材库** — 目录树 + 视频为主的媒体浏览  
 3. **抽帧与审查** — 参数面板 + **时间序缩略图网格** + 批量删除（高频页）  
-4. **数据集** — 成员、来源摘要（抽帧/上传/导入）、划分  
+4. **数据集** — 成员、来源摘要（抽帧/上传/导入）；**工作区不展示划分/unassigned**（避免迷惑）  
 5. **标注台（工作区）** — 画布为主、类别与快捷键、上下帧、源视频/帧号；**默认可编辑**，顶栏标明「工作区」  
-6. **版本与导出** — 版本列表、diff 摘要；**「查看快照」**进入只读标注视图（路由带 `version=`，徽章「版本 · 只读」）；导出进度与下载可后置  
-7. **发版门槛** — 全部成员标注 `submitted` 后方可发版；数据集支持移出成员（删引用、不硬删文件）  
+6. **版本与导出** — 版本列表、diff 摘要；**「查看快照」**进入只读标注视图（路由带 `version=`，徽章「版本 · 只读」）；划分结果以版本快照为准；导出进度与下载可后置  
+7. **发版门槛** — 全部成员标注 `submitted` 后方可发版；发版时按 train/val/test 比例 + seed 随机划分并冻进快照；数据集支持移出成员（删引用、不硬删文件）  
 8. **应用到工作区** — 从版本只读视图可将快照**合并**进工作区：同 asset 覆盖标注（置 `draft`）、缺则入集+写标、工作区多出的成员保留；不改版本快照  
 
 #### 技术落点
@@ -631,7 +637,7 @@ services:
 
 1. ~~库内坐标用 `xyxy_abs` 还是归一化？~~ **已定：`format=xyxy_abs`（像素绝对坐标 `[x1,y1,x2,y2]`）**；导出 YOLO 时再归一化（导出延后）。  
 2. ~~标注 GET 无记录时 `404` 还是空 `draft`？~~ **已定：返回空 draft（200）**，便于标注台。  
-3. ~~annotator 是否允许发版 / 导入 / 抽帧？~~ **已定：annotator 可抽帧与标注；发版仅 admin；导入延后。**  
+3. ~~annotator 是否允许发版 / 导入 / 抽帧？~~ **已定：annotator 可抽帧与标注；发版仅 owner；导入延后。角色名由 admin 更名为 owner。**  
 4. 导入到**已有非空**数据集时：合并、拒绝，还是仅允许空集/新建？（**导入延后**，本 change 不收口）  
 5. ~~对象存储是否 P0 就做浏览器直传（presign），还是一律经 API 中转？~~ **已定：一律经 API。**  
 6. ~~UI 底座：Radix + 自研皮肤，或其它 headless？~~ **已定：自研 tokens + CSS 组件皮肤（无默认后台主题）；P0 未引入 Radix。**  
@@ -642,7 +648,7 @@ services:
 
 | 区域 | 结论 |
 |------|------|
-| 项目/成员 | `POST/GET /projects`、`POST .../members`；viewer 写操作 403 |
+| 项目/成员 | `POST/GET /projects`、`GET/POST .../members`、`PATCH .../members/{userId}`；viewer 写操作 403；发版/管成员仅 owner |
 | 目录/素材 | folders CRUD；`POST/GET .../assets`；content RFC5987；硬删引用 409 |
 | 抽帧 | `POST .../extract-jobs`；frames 时间升序；batch-delete → `discarded_count` |
 | 数据集 | `POST/GET .../datasets`（含列表）；成员/from-extract；不可直接加 video |

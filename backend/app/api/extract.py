@@ -14,6 +14,7 @@ from app.auth.deps import (
     CurrentUser,
     get_current_user,
     get_membership,
+    has_any_role,
 )
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.logging import get_logger
@@ -93,7 +94,7 @@ def start_extract(
     if video is None:
         raise NotFoundError("视频不存在")
     m = get_membership(db, video.project_id, user.id)
-    if m is None or m.role not in WRITE_ROLES:
+    if m is None or not has_any_role(m, WRITE_ROLES):
         raise ForbiddenError("权限不足")
 
     options = {}
@@ -172,7 +173,7 @@ def batch_delete(
     if job is None:
         raise NotFoundError("抽帧任务不存在")
     m = get_membership(db, job.project_id, user.id)
-    if m is None or m.role not in WRITE_ROLES:
+    if m is None or not has_any_role(m, WRITE_ROLES):
         raise ForbiddenError("权限不足")
     return batch_delete_frames(
         db,

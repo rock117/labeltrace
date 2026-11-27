@@ -16,6 +16,7 @@ from app.auth.deps import (
     CurrentUser,
     get_current_user,
     get_membership,
+    has_any_role,
     require_project_role,
 )
 from app.core.errors import ForbiddenError, NotFoundError, ValidationAppError
@@ -163,7 +164,7 @@ def rename_dataset(
     if ds is None:
         raise NotFoundError("数据集不存在")
     m = get_membership(db, ds.project_id, user.id)
-    if m is None or m.role not in WRITE_ROLES:
+    if m is None or not has_any_role(m, WRITE_ROLES):
         raise ForbiddenError("权限不足")
     name = body.name.strip()
     if not name:
@@ -186,7 +187,7 @@ def add_assets(
     if ds is None:
         raise NotFoundError("数据集不存在")
     m = get_membership(db, ds.project_id, user.id)
-    if m is None or m.role not in WRITE_ROLES:
+    if m is None or not has_any_role(m, WRITE_ROLES):
         raise ForbiddenError("权限不足")
 
     out: list[DatasetAssetOut] = []
@@ -232,7 +233,7 @@ def remove_asset(
     if ds is None:
         raise NotFoundError("数据集不存在")
     m = get_membership(db, ds.project_id, user.id)
-    if m is None or m.role not in WRITE_ROLES:
+    if m is None or not has_any_role(m, WRITE_ROLES):
         raise ForbiddenError("权限不足")
     row = db.get(DatasetAsset, (dataset_id, asset_id))
     if row is None:
@@ -260,7 +261,7 @@ def update_split(
     if ds is None:
         raise NotFoundError("数据集不存在")
     m = get_membership(db, ds.project_id, user.id)
-    if m is None or m.role not in WRITE_ROLES:
+    if m is None or not has_any_role(m, WRITE_ROLES):
         raise ForbiddenError("权限不足")
     row = db.get(DatasetAsset, (dataset_id, asset_id))
     if row is None:
@@ -324,7 +325,7 @@ def add_remaining_extract_frames(
     if ds is None:
         raise NotFoundError("数据集不存在")
     m = get_membership(db, ds.project_id, user.id)
-    if m is None or m.role not in WRITE_ROLES:
+    if m is None or not has_any_role(m, WRITE_ROLES):
         raise ForbiddenError("权限不足")
     extract = db.get(FrameExtractJob, body.extract_job_id)
     if extract is None or extract.project_id != ds.project_id:

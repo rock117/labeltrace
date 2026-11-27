@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from './layout/AppShell'
+import { AuthPage } from './pages/AuthPage'
 import { ProjectsPage } from './pages/ProjectsPage'
 import { LibraryPage } from './pages/LibraryPage'
 import { DatasetsPage } from './pages/DatasetsPage'
@@ -19,6 +20,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
+        <Route path="/login" element={<AuthPage />} />
         <Route element={<AppShell />}>
           <Route index element={<HomeRedirect />} />
           <Route path="projects" element={<ProjectsPage />} />

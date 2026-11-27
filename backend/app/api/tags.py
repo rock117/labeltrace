@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth.deps import ALL_ROLES, WRITE_ROLES, CurrentUser, get_current_user, get_membership, require_project_role
+from app.auth.deps import ALL_ROLES, WRITE_ROLES, CurrentUser, get_current_user, get_membership, has_any_role, require_project_role
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError, ValidationAppError
 from app.core.logging import get_logger
 from app.db.session import get_db
@@ -83,7 +83,7 @@ def set_asset_tags(
     if asset is None:
         raise NotFoundError("素材不存在")
     m = get_membership(db, asset.project_id, user.id)
-    if m is None or m.role not in WRITE_ROLES:
+    if m is None or not has_any_role(m, WRITE_ROLES):
         raise ForbiddenError("权限不足")
     tags = list(
         db.scalars(

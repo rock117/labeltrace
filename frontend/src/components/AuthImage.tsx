@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getUserId } from '../lib/api'
+import { getToken } from '../lib/api'
 
 type Props = {
   assetId: string
@@ -7,7 +7,7 @@ type Props = {
   className?: string
 }
 
-/** 带 X-User-Id 拉取素材内容，供 <img> 使用。 */
+/** 带 Bearer 拉取素材内容，供 <img> 使用。 */
 export function AuthImage({ assetId, alt = '', className }: Props) {
   const [url, setUrl] = useState<string | null>(null)
   const [error, setError] = useState(false)
@@ -19,9 +19,10 @@ export function AuthImage({ assetId, alt = '', className }: Props) {
     setUrl(null)
     ;(async () => {
       try {
-        const res = await fetch(`/api/v1/assets/${assetId}/content`, {
-          headers: { 'X-User-Id': getUserId() },
-        })
+        const token = getToken()
+        const headers: HeadersInit = {}
+        if (token) headers.Authorization = `Bearer ${token}`
+        const res = await fetch(`/api/v1/assets/${assetId}/content`, { headers })
         if (!res.ok) throw new Error(String(res.status))
         const blob = await res.blob()
         if (cancelled) return

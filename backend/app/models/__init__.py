@@ -9,10 +9,12 @@ from app.models.frame_extract_job import FrameExtractJob
 from app.models.job import Job
 from app.models.project import Membership, Project
 from app.models.tag import AssetTag, Tag
+from app.models.user import User
 from app.models.version import DatasetVersion
 
 __all__ = [
     "Base",
+    "User",
     "Job",
     "Project",
     "Membership",

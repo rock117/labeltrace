@@ -166,7 +166,7 @@ def test_main_path_upload_extract_review_annotate_publish(tmp_path: Path) -> Non
         client.post(
             f"/api/v1/projects/{pid}/members",
             headers=_h("main"),
-            json={"user_id": "viewer1", "role": "viewer"},
+            json={"user_id": "viewer1", "roles": ["viewer"]},
         )
         forbidden = client.post(
             f"/api/v1/folders/{folder}/assets",
