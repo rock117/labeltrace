@@ -5,6 +5,8 @@ import type { Asset, ExtractJob, Folder, FrameCandidate } from '../lib/types'
 import { useAppStore } from '../store/appStore'
 import { formatError } from '../hooks/useAsync'
 import { AuthImage } from '../components/AuthImage'
+import { AuthVideo } from '../components/AuthVideo'
+import { AuthVideoThumb } from '../components/AuthVideoThumb'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
 import { appPrompt } from '../store/dialogStore'
@@ -506,15 +508,21 @@ function LibraryInner() {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {videos.map((v) => (
-                    <div key={v.id} style={{ display: 'flex', gap: 6 }}>
+                    <div
+                      key={v.id}
+                      style={{ display: 'flex', gap: 6, minWidth: 0, width: '100%' }}
+                    >
                       <button
                         type="button"
                         className="lt-btn"
+                        title={v.filename}
                         style={{
                           flex: 1,
+                          minWidth: 0,
                           justifyContent: 'flex-start',
                           height: 'auto',
-                          padding: '0.55rem 0.65rem',
+                          padding: '0.45rem 0.55rem',
+                          gap: 8,
                           background:
                             selectedVideo?.id === v.id
                               ? 'var(--lt-accent-soft)'
@@ -522,8 +530,44 @@ function LibraryInner() {
                         }}
                         onClick={() => setSelectedVideo(v)}
                       >
-                        <span style={{ textAlign: 'left' }}>
-                          <div style={{ fontWeight: 600 }}>{v.filename}</div>
+                        {selectedVideo?.id === v.id ? (
+                          <AuthVideoThumb assetId={v.id} />
+                        ) : (
+                          <div
+                            aria-hidden
+                            style={{
+                              width: 72,
+                              height: 48,
+                              flexShrink: 0,
+                              borderRadius: 4,
+                              background: 'var(--lt-bg-canvas)',
+                              display: 'grid',
+                              placeItems: 'center',
+                              fontSize: 11,
+                              color: 'var(--lt-fg-subtle)',
+                            }}
+                          >
+                            ▶
+                          </div>
+                        )}
+                        <span
+                          style={{
+                            textAlign: 'left',
+                            minWidth: 0,
+                            flex: 1,
+                            overflow: 'hidden',
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontWeight: 600,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {v.filename}
+                          </div>
                           <div
                             className="mono"
                             style={{ fontSize: 11, color: 'var(--lt-fg-subtle)' }}
@@ -539,6 +583,7 @@ function LibraryInner() {
                         type="button"
                         className="lt-btn"
                         disabled={busy}
+                        style={{ flexShrink: 0 }}
                         onClick={() => void renameAsset(v)}
                       >
                         改名
@@ -549,7 +594,23 @@ function LibraryInner() {
               )}
 
               {selectedVideo ? (
-                <div style={{ marginTop: '1rem', display: 'grid', gap: 8 }}>
+                <div style={{ marginTop: '1rem', display: 'grid', gap: 10 }}>
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 600,
+                        marginBottom: 6,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                      title={selectedVideo.filename}
+                    >
+                      预览 · {selectedVideo.filename}
+                    </div>
+                    <AuthVideo assetId={selectedVideo.id} />
+                  </div>
                   <label style={{ fontSize: 12, color: 'var(--lt-fg-muted)' }}>
                     抽帧步长（帧）
                     <input
