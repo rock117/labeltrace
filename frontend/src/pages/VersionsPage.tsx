@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { api } from '../lib/api'
+import { api, getToken } from '../lib/api'
 import type { Dataset, Version } from '../lib/types'
 import { formatError } from '../hooks/useAsync'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
 import { appConfirm } from '../store/dialogStore'
+
+type JobStatus = {
+  id: string
+  status: string
+  progress: number | null
+  result: Record<string, unknown> | null
+  error_message: string | null
+}
 
 const DATASET_KEY = 'labeltrace.datasetId'
 
@@ -24,11 +32,93 @@ function VersionsInner() {
   const [splitSeed, setSplitSeed] = useState(42)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [exportingId, setExportingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
   const splitSum = Math.round((splitTrain + splitVal + splitTest) * 1000) / 1000
   const splitOk = Math.abs(splitSum - 1) < 0.001
+
+  const downloadExportZip = async (versionId: string) => {
+    const headers: Record<string, string> = {}
+    const token = getToken()
+    if (token) headers.Authorization = `Bearer ${token}`
+    const res = await fetch(`/api/v1/versions/${versionId}/export/download`, {
+      headers,
+    })
+    if (!res.ok) {
+      let detail: unknown = await res.text()
+      try {
+        detail = JSON.parse(detail as string)
+      } catch {
+        /* keep text */
+      }
+      const obj = detail as { detail?: unknown } | null
+      throw new Error(
+        typeof obj?.detail === 'string'
+          ? obj.detail
+          : `下载失败（${res.status}）`,
+      )
+    }
+    const blob = await res.blob()
+    const cd = res.headers.get('Content-Disposition') || ''
+    const star = /filename\*=UTF-8''([^;]+)/i.exec(cd)
+    const quoted = /filename="([^"]+)"/i.exec(cd)
+    const plain = /filename=([^;]+)/i.exec(cd)
+    let filename = 'export.zip'
+    const raw = (star?.[1] || quoted?.[1] || plain?.[1] || '').trim()
+    if (raw) {
+      try {
+        filename = decodeURIComponent(raw)
+      } catch {
+        filename = raw
+      }
+    }
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const exportYolo = async (versionId: string, versionName: string) => {
+    setExportingId(versionId)
+    setError(null)
+    setMessage(`正在导出 ${versionName}…`)
+    try {
+      const enq = await api<{ job_id: string; status: string }>(
+        `/v1/versions/${versionId}/export`,
+        { method: 'POST' },
+      )
+      let job: JobStatus | null = null
+      for (let i = 0; i < 120; i++) {
+        job = await api<JobStatus>(`/v1/jobs/${enq.job_id}`)
+        if (job.status === 'succeeded' || job.status === 'failed') break
+        setMessage(
+          `正在导出 ${versionName}… ${job.status}` +
+            (job.progress != null ? ` ${Math.round(job.progress * 100)}%` : ''),
+        )
+        await new Promise((r) => setTimeout(r, 500))
+      }
+      if (!job || job.status !== 'succeeded') {
+        throw new Error(job?.error_message || '导出失败或超时')
+      }
+      const n = (job.result?.imageCount as number | undefined) ?? null
+      setMessage(
+        `导出完成${n != null ? `（${n} 张）` : ''}，开始下载…`,
+      )
+      await downloadExportZip(versionId)
+      setMessage(
+        `已下载 YOLO 包${n != null ? `（${n} 张）` : ''} · ${versionName}`,
+      )
+    } catch (e) {
+      setError(formatError(e))
+      setMessage(null)
+    } finally {
+      setExportingId(null)
+    }
+  }
 
   const applyToWorkspace = async (versionId: string, versionName: string) => {
     const ok = await appConfirm({
@@ -142,7 +232,7 @@ function VersionsInner() {
           <h1>版本</h1>
           <p>
             {dataset?.name ?? '数据集'} · 全部成员须已「提交」标注后方可发版；发版时按比例随机划分
-            train/val/test。
+            train/val/test；导出为该版本的 YOLO detect zip。
           </p>
         </div>
         <Link to={`/annotate?dataset=${datasetId}`} className="lt-btn">
@@ -301,7 +391,15 @@ function VersionsInner() {
                   <button
                     type="button"
                     className="lt-btn lt-btn-primary"
-                    disabled={busy}
+                    disabled={busy || exportingId === v.id}
+                    onClick={() => void exportYolo(v.id, v.name)}
+                  >
+                    {exportingId === v.id ? '导出中…' : '导出 YOLO'}
+                  </button>
+                  <button
+                    type="button"
+                    className="lt-btn"
+                    disabled={busy || exportingId != null}
                     onClick={() => void applyToWorkspace(v.id, v.name)}
                   >
                     应用到工作区

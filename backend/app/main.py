@@ -14,12 +14,13 @@ from app.api.auth import router as auth_router
 from app.api.datasets import router as datasets_router
 from app.api.extract import router as extract_router
 from app.api.folders import router as folders_router
+from app.api.imports import router as imports_router
 from app.api.jobs import router as jobs_router
 from app.api.lineage import router as lineage_router
 from app.api.projects import router as projects_router
 from app.api.tags import router as tags_router
 from app.api.versions import router as versions_router
-# 注册 frame_extract 等 handlers
+# 注册 frame_extract / yolo_export / yolo_import 等 handlers
 import app.jobs.handlers  # noqa: F401
 from app.core.errors import AppError
 from app.core.logging import get_logger, setup_logging
@@ -74,6 +75,7 @@ app.include_router(assets_router, prefix="/api/v1")
 app.include_router(extract_router, prefix="/api/v1")
 app.include_router(tags_router, prefix="/api/v1")
 app.include_router(datasets_router, prefix="/api/v1")
+app.include_router(imports_router, prefix="/api/v1")
 app.include_router(annotations_router, prefix="/api/v1")
 app.include_router(versions_router, prefix="/api/v1")
 app.include_router(lineage_router, prefix="/api/v1")

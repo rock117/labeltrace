@@ -1,4 +1,4 @@
-"""发版与版本查询；memberSources 工作区摘要。"""
+"""发版与版本查询；memberSources 工作区摘要；YOLO 导出。"""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -15,10 +16,15 @@ from app.auth.deps import CurrentUser, get_current_user, get_membership
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.logging import get_logger
 from app.db.session import get_db
+from app.jobs.service import JobService, get_job_service
 from app.models.dataset import Dataset
+from app.models.job import Job
 from app.models.version import DatasetVersion
+from app.services.assets import content_disposition_attachment
+from app.services.export_yolo import export_storage_key
 from app.services.member_sources import build_member_sources
 from app.services.versions import apply_version_to_workspace, publish_version
+from app.storage.factory import get_blob_store, get_default_write_backend
 
 router = APIRouter(tags=["versions"])
 logger = get_logger("labeltrace.api.versions")
@@ -195,4 +201,103 @@ def apply_to_workspace(
         skipped=stats["skipped"],
         entryCount=stats["entryCount"],
         dataset_id=v.dataset_id,
+    )
+
+
+class ExportJobOut(BaseModel):
+    job_id: UUID
+    version_id: UUID
+    status: str
+
+
+def _version_for_member(
+    db: Session, version_id: UUID, user_id: str
+) -> tuple[DatasetVersion, Dataset]:
+    v = db.get(DatasetVersion, version_id)
+    if v is None:
+        raise NotFoundError("版本不存在")
+    ds = db.get(Dataset, v.dataset_id)
+    if ds is None:
+        raise NotFoundError("数据集不存在")
+    m = get_membership(db, ds.project_id, user_id)
+    if m is None:
+        raise ForbiddenError("不是项目成员")
+    return v, ds
+
+
+@router.post(
+    "/versions/{version_id}/export",
+    response_model=ExportJobOut,
+    status_code=202,
+)
+def start_yolo_export(
+    version_id: UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+    jobs: Annotated[JobService, Depends(get_job_service)],
+) -> ExportJobOut:
+    """入队 YOLO zip 导出；立即返回 job_id，完成后 GET .../export/download。"""
+    v, _ds = _version_for_member(db, version_id, user.id)
+    job = jobs.enqueue(
+        db,
+        "yolo_export",
+        {"version_id": str(v.id), "requested_by": user.id},
+    )
+    logger.info(
+        "yolo_export_enqueued version_id=%s job_id=%s user_id=%s",
+        v.id,
+        job.id,
+        user.id,
+    )
+    return ExportJobOut(job_id=job.id, version_id=v.id, status=job.status)
+
+
+@router.get("/versions/{version_id}/export/download")
+def download_yolo_export(
+    version_id: UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    """下载已生成的 YOLO zip；尚未导出或产物缺失时 404。"""
+    v, ds = _version_for_member(db, version_id, user.id)
+    key = export_storage_key(ds.project_id, v.id)
+    backend = get_default_write_backend()
+    download_name = f"{ds.name}_{v.name}.zip"
+
+    # 优先用本版本最近一次成功导出的 backend/key/文件名
+    for j in db.scalars(
+        select(Job)
+        .where(Job.job_type == "yolo_export", Job.status == "succeeded")
+        .order_by(Job.finished_at.desc().nullslast(), Job.created_at.desc())
+        .limit(100)
+    ).all():
+        payload = j.payload or {}
+        result = j.result if isinstance(j.result, dict) else {}
+        if str(payload.get("version_id")) != str(v.id) and str(
+            result.get("versionId")
+        ) != str(v.id):
+            continue
+        backend = str(result.get("storageBackend") or backend)
+        key = str(result.get("storageKey") or key)
+        if result.get("downloadName"):
+            download_name = str(result["downloadName"])
+        break
+
+    store = get_blob_store(backend)
+    if not store.exists(key):
+        raise NotFoundError("尚未导出或导出文件不存在，请先触发导出")
+
+    body = b"".join(store.get(key))
+    logger.info(
+        "yolo_export_download version_id=%s bytes=%s key=%s",
+        version_id,
+        len(body),
+        key,
+    )
+    return Response(
+        content=body,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": content_disposition_attachment(download_name),
+        },
     )

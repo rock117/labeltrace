@@ -106,19 +106,19 @@
 
 ---
 
-## 延后：导入 / 导出（不阻塞主体）
+## YOLO 导入 / 导出
 
-### 6. 数据集导入（dataset-import）— 延后
+### 6. 数据集导入（dataset-import）
 
-- [ ] 6.1 实现 `DatasetImport` 记录与 YOLO zip 解析（data.yaml + images/labels），非法包返回 422
-- [ ] 6.2 实现导入创建 Asset（`origin=import`, `library_visible=false`）+ 成员 + 标注 + split，并验证素材库目录看不到、数据集内看得到
-- [ ] 6.3 实现导入去重复用已有 hash，并验证 `stats.reused` 与不重复存盘
-- [ ] 6.4 实现导入状态查询 API，并验证成功后血缘可关联 `importId`
+- [x] 6.1 实现 `DatasetImport` 记录与 YOLO zip 解析（data.yaml + images/labels），非法包返回 422
+- [x] 6.2 实现导入创建 Asset（`origin=import`, `library_visible=false`）+ 成员 + 标注 + split，并验证素材库目录看不到、数据集内看得到
+- [x] 6.3 实现导入去重复用已有 hash，并验证 `stats.reused` 与不重复存盘
+- [x] 6.4 实现导入状态查询 API，并验证成功后血缘可关联 `importId`
 
-### 8b. YOLO 导出 — 延后
+### 8b. YOLO 导出
 
-- [ ] 8.3 实现按版本导出 YOLO zip，并验证对「仅导入、非库可见」成员导出内容与快照一致
-- [ ] 8.4 验证：素材仅留在历史版本中时硬删仍 409，且该版本仍可导出
+- [x] 8.3 实现按版本导出 YOLO zip（异步 job + 下载；包内文件名规则；空 label 负样本；UI 版本页）
+- [x] 8.4 验证：素材仅留在历史版本中时硬删仍 409（`asset_has_references`），且该版本仍可导出
 
 ## 后续规划（不阻塞本 change）
 
@@ -128,5 +128,5 @@
 
 ## Workflow follow-up
 
-- 主体验收通过后，可继续延后的导入/导出，再 OpenSpec archive。
+- 主体 / 导入 / 导出验收通过后，可 OpenSpec archive。
 - 用户流程说明见 `docs/guides/数据集从上传到发版.md`（随产品变更同步更新，不替代 spec）。

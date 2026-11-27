@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.asset import Asset
 from app.models.dataset import DatasetAsset
+from app.models.dataset_import import DatasetImport
 from app.models.frame_extract_job import FrameExtractJob
 
 
@@ -68,10 +69,15 @@ def build_member_sources(db: Session, dataset_id: UUID) -> list[dict[str, Any]]:
             {"kind": "upload", "imageCount": len(upload_images)}
         )
     for iid, imgs in import_groups.items():
+        pkg = None
+        if iid is not None:
+            imp = db.get(DatasetImport, iid)
+            pkg = imp.package_name if imp else None
         sources.append(
             {
                 "kind": "import",
                 "importId": str(iid) if iid else None,
+                "packageName": pkg,
                 "imageCount": len(imgs),
             }
         )

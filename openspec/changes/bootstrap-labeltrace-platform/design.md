@@ -431,11 +431,21 @@ P0 默认：**导入到新建数据集**（实现简单）；导入到已有空�
 
 同前：发版写快照；导出只读快照 + 按 hash 取对象。因禁止硬删被引用素材，导出不依赖「素材还在不在库里展示」。
 
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/versions/{versionId}/export` | 入队 `yolo_export`；立即返回 job；产物 key=`proj/{project_id}/exports/{version_id}.zip` |
+| GET | `/versions/{versionId}/export/download` | 下载已生成 zip；尚未导出则 404 |
+
+项目成员（含 viewer）可导出/下载。
+
 ### D7. YOLO 导出映射
 
-- `labels/*.txt`：`cls cx cy w h` 归一化。  
-- `data.yaml`：names 来自版本 `classes`。  
-- 无标注成员：空 label 或跳过（实现固定一种）。
+- 目录：`{train,val,test}/images|labels/` + 根 `data.yaml`。  
+- `labels/*.txt`：`cls cx cy w h` 归一化（由快照 `xyxy_abs` 换算）。  
+- `data.yaml`：names 来自版本 `classes`；`train`/`val`/`test` 指向对应 images 相对路径。  
+- **无框成员：固定写空 label 文件**（负样本；不跳过）。  
+- **包内文件名**：不直接用 `assets.filename`（易重名/中文）。stem = `{asset_id 去横线前 8 位}_{安全化原 stem}`；冲突追加更多 id 位；扩展名跟原图。  
+- zip 下载展示名：`{dataset}_{version}.zip`（ASCII 安全化）；BlobStore key 仍按 `exports/{version_id}.zip`。
 
 ### D8. 鉴权与角色（P0 摘要）
 
@@ -637,10 +647,12 @@ services:
 
 ## Open Questions
 
-1. ~~库内坐标用 `xyxy_abs` 还是归一化？~~ **已定：`format=xyxy_abs`（像素绝对坐标 `[x1,y1,x2,y2]`）**；导出 YOLO 时再归一化（导出延后）。  
+1. ~~库内坐标用 `xyxy_abs` 还是归一化？~~ **已定：`format=xyxy_abs`（像素绝对坐标 `[x1,y1,x2,y2]`）**；导出 YOLO 时再归一化。  
+
 2. ~~标注 GET 无记录时 `404` 还是空 `draft`？~~ **已定：返回空 draft（200）**，便于标注台。  
 3. ~~annotator 是否允许发版 / 导入 / 抽帧？~~ **已定：annotator 可抽帧与标注；发版仅 owner；导入延后。角色名由 admin 更名为 owner。**  
-4. 导入到**已有非空**数据集时：合并、拒绝，还是仅允许空集/新建？（**导入延后**，本 change 不收口）  
+4. ~~导入到**已有非空**数据集时：合并、拒绝，还是仅允许空集/新建？~~ **已定：P0 仅新建或空数据集；非空拒绝 422。**  
+
 5. ~~对象存储是否 P0 就做浏览器直传（presign），还是一律经 API 中转？~~ **已定：一律经 API。**  
 6. ~~UI 底座：Radix + 自研皮肤，或其它 headless？~~ **已定：自研 tokens + CSS 组件皮肤（无默认后台主题）；P0 未引入 Radix。**  
 7. ~~默认抽帧策略？~~ **已定：仅手动触发；UI 默认 stride=30，API 可传 stride/interval；样例/验收常用 stride=5。**  
@@ -657,4 +669,5 @@ services:
 | 标注 | PUT/GET shapes+`type`；空 draft 200；未启用类型 422 |
 | 版本 | 发版快照+`member_sources`+diff；manifest 只读；发版后改工作区不影响版本 |
 | 血缘 | `GET .../lineage`；frame 含 parentVideoId/frameIndex |
-| 延后 | dataset import、YOLO zip 导出（tasks 6.x / 8.3–8.4） |
+| 导出 | `POST/GET .../versions/{id}/export`（YOLO zip）已实现 |
+| 导入 | `POST .../dataset-imports` multipart YOLO zip；GET 状态 / 列表 |

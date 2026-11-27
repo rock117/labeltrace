@@ -53,6 +53,7 @@ function DatasetsInner() {
   const [classesText, setClassesText] = useState('person,car')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [importName, setImportName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -149,6 +150,53 @@ function DatasetsInner() {
       setMessage(`已创建数据集 ${ds.name}`)
     } catch (e) {
       setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const importYoloZip = async (file: File) => {
+    const dsName = importName.trim() || file.name.replace(/\.zip$/i, '') || 'imported'
+    setBusy(true)
+    setError(null)
+    setMessage(`正在导入 ${file.name}…`)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('datasetName', dsName)
+      const imp = await api<{
+        id: string
+        dataset_id: string | null
+        status: string
+        error_message: string | null
+        stats: Record<string, unknown>
+      }>(`/v1/projects/${projectId}/dataset-imports`, {
+        method: 'POST',
+        body: fd,
+      })
+      let row = imp
+      for (let i = 0; i < 120; i++) {
+        row = await api<typeof imp>(`/v1/dataset-imports/${imp.id}`)
+        if (row.status === 'succeeded' || row.status === 'failed') break
+        setMessage(`导入进行中… ${row.status}`)
+        await new Promise((r) => setTimeout(r, 500))
+      }
+      if (row.status !== 'succeeded') {
+        throw new Error(row.error_message || '导入失败或超时')
+      }
+      const n = (row.stats?.images as number | undefined) ?? null
+      const reused = (row.stats?.reused as number | undefined) ?? 0
+      setImportName('')
+      await reload()
+      if (row.dataset_id) await selectDataset(row.dataset_id)
+      setMessage(
+        `导入完成${n != null ? `：${n} 张` : ''}` +
+          (reused ? `（复用 ${reused}）` : '') +
+          ` · 数据集 ${dsName}`,
+      )
+    } catch (e) {
+      setError(formatError(e))
+      setMessage(null)
     } finally {
       setBusy(false)
     }
@@ -334,7 +382,8 @@ function DatasetsInner() {
         <div>
           <h1>数据集</h1>
           <p>
-            图片/视频在素材库上传与抽帧审查；本页勾选抽帧任务或库内图片入集 → 标注 → 发版。
+            图片/视频在素材库上传与抽帧审查；也可导入已有 YOLO zip；本页勾选抽帧任务或库内图片入集 →
+            标注 → 发版。
           </p>
         </div>
       </div>
@@ -369,6 +418,45 @@ function DatasetsInner() {
           >
             创建
           </button>
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            gap: 8,
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            marginTop: 12,
+            paddingTop: 12,
+            borderTop: '1px solid var(--lt-border)',
+          }}
+        >
+          <span style={{ fontSize: 13, color: 'var(--lt-fg-muted)' }}>
+            导入 YOLO zip
+          </span>
+          <input
+            className="lt-input"
+            placeholder="新建数据集名（可空，默认用文件名）"
+            value={importName}
+            onChange={(e) => setImportName(e.target.value)}
+            style={{ maxWidth: 260 }}
+          />
+          <label className="lt-btn" style={{ cursor: busy ? 'not-allowed' : 'pointer' }}>
+            {busy ? '处理中…' : '选择 zip'}
+            <input
+              type="file"
+              accept=".zip,application/zip"
+              disabled={busy}
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                e.target.value = ''
+                if (f) void importYoloZip(f)
+              }}
+            />
+          </label>
+          <span style={{ fontSize: 12, color: 'var(--lt-fg-subtle)' }}>
+            需含 data.yaml + train|val|test/images|labels；仅负责人；导入图不进素材库目录
+          </span>
         </div>
       </div>
 

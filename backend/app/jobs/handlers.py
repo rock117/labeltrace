@@ -33,5 +33,29 @@ def frame_extract_handler(job_id: UUID, payload: dict[str, Any]) -> dict[str, An
     return run_frame_extract(_UUID(str(raw)))
 
 
+def yolo_export_handler(job_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
+    from uuid import UUID as _UUID
+
+    from app.services.export_yolo import run_yolo_export
+
+    raw = payload.get("version_id")
+    if not raw:
+        raise ValueError("yolo_export 缺少 version_id")
+    return run_yolo_export(_UUID(str(raw)))
+
+
+def yolo_import_handler(job_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
+    from uuid import UUID as _UUID
+
+    from app.services.import_yolo import run_dataset_import
+
+    raw = payload.get("import_id")
+    if not raw:
+        raise ValueError("yolo_import 缺少 import_id")
+    return run_dataset_import(_UUID(str(raw)))
+
+
 register_handler("echo", echo_handler)
 register_handler("frame_extract", frame_extract_handler)
+register_handler("yolo_export", yolo_export_handler)
+register_handler("yolo_import", yolo_import_handler)

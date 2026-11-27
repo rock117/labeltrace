@@ -101,8 +101,18 @@
 - **AND** `v1.1` 相对 `v1.0` 的变更摘要能反映成员新增（或等价信息）
 
 ### Requirement: 按版本导出 YOLO
-系统 SHALL 支持按指定版本导出 YOLO 检测格式包（图像、对应 labels、以及含 names 的配置），导出内容 MUST 与该版本快照一致。
+系统 SHALL 支持按指定版本导出 YOLO 检测格式包（图像、对应 labels、以及含 names 的配置），导出内容 MUST 与该版本快照一致。导出为异步任务（经 JobBackend），产物写入 BlobStore，完成后可下载 zip。
+
+包结构（detect）：按 split 分目录 `train|val|test/{images,labels}/`；根目录含 `data.yaml`（names 来自版本 `classes`）。labels 为 `cls cx cy w h` 归一化；无框成员 MUST 仍写出**空** `.txt`（负样本）。包内文件名 MUST **重新生成**以保证唯一与图/标配对：stem = `{asset_id 去横线前 8 位}_{原文件名安全化}`（仅 `[A-Za-z0-9._-]`，过长截断；冲突再追加 asset_id 片段）；扩展名取自原图。
 
 #### Scenario: 导出与快照一致
 - **WHEN** 用户导出版本 `v1.3`
 - **THEN** 导出包中的类别名、划分与标注与 `v1.3` 快照一致，且不依赖之后的工作区变更
+
+#### Scenario: 包内文件名唯一且可配对
+- **WHEN** 版本中存在多张同名帧（如均叫 `frame_000054.jpg`）
+- **THEN** 包内 images 与 labels 使用上述规则生成的不同 stem，且每张图有同 stem 的 label 文件
+
+#### Scenario: 非库可见成员仍可导出
+- **WHEN** 版本快照含 `library_visible=false` 的成员（如未来导入图）
+- **THEN** 仍按快照 content_hash / storage 取图并写入导出包，不依赖素材库目录可见性
