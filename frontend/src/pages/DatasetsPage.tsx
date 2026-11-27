@@ -36,7 +36,6 @@ function DatasetsInner() {
   const projectId = useAppStore((s) => s.projectId)!
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [folders, setFolders] = useState<Folder[]>([])
-  const [uploadFolderId, setUploadFolderId] = useState('')
   const [libraryFolderId, setLibraryFolderId] = useState('')
   const [libraryImages, setLibraryImages] = useState<Asset[]>([])
   const [picked, setPicked] = useState<Set<string>>(new Set())
@@ -77,9 +76,6 @@ function DatasetsInner() {
       setDatasets(list)
       setFolders(folderList)
       const firstFolder = folderList[0]?.id || ''
-      setUploadFolderId((prev) =>
-        prev && folderList.some((f) => f.id === prev) ? prev : firstFolder,
-      )
       setLibraryFolderId((prev) =>
         prev && folderList.some((f) => f.id === prev) ? prev : firstFolder,
       )
@@ -270,38 +266,6 @@ function DatasetsInner() {
     }
   }
 
-  const uploadImage = async (file: File) => {
-    if (!active) return
-    if (!uploadFolderId) {
-      setError('请先在素材库创建目录，并在此选择上传目标目录')
-      return
-    }
-    setBusy(true)
-    setError(null)
-    try {
-      const fd = new FormData()
-      fd.append('file', file)
-      const asset = await api<Asset>(`/v1/folders/${uploadFolderId}/assets`, {
-        method: 'POST',
-        body: fd,
-      })
-      if (asset.media_kind === 'video') {
-        setError('请上传图片；视频请走素材库抽帧')
-        return
-      }
-      await api(`/v1/datasets/${active.id}/assets`, {
-        method: 'POST',
-        body: JSON.stringify({ asset_ids: [asset.id], split: 'unassigned' }),
-      })
-      await selectDataset(active.id)
-      setMessage(`已上传并入集：${asset.filename}`)
-    } catch (e) {
-      setError(formatError(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
   if (loading) return <LoadingBlock />
 
   return (
@@ -309,7 +273,9 @@ function DatasetsInner() {
       <div className="lt-page-head">
         <div>
           <h1>数据集</h1>
-          <p>入集 → 标注提交 → 发版时按比例随机划分 train/val/test。</p>
+          <p>
+            图片/视频请在素材库上传；本页只从库勾选入集或加入抽帧剩余帧 → 标注 → 发版。
+          </p>
         </div>
       </div>
 
@@ -413,41 +379,9 @@ function DatasetsInner() {
                     >
                       加入审查剩余帧
                     </button>
-                    {folders.length === 0 ? (
-                      <Link to="/library" className="lt-btn">
-                        先去素材库建目录
-                      </Link>
-                    ) : (
-                      <>
-                        <select
-                          className="lt-select"
-                          value={uploadFolderId}
-                          onChange={(e) => setUploadFolderId(e.target.value)}
-                          title="上传目标目录"
-                          style={{ maxWidth: 180 }}
-                        >
-                          {folders.map((f) => (
-                            <option key={f.id} value={f.id}>
-                              {f.path}
-                            </option>
-                          ))}
-                        </select>
-                        <label className="lt-btn" style={{ cursor: 'pointer' }}>
-                          上传图片入集
-                          <input
-                            type="file"
-                            accept="image/*"
-                            hidden
-                            disabled={busy || !uploadFolderId}
-                            onChange={(e) => {
-                              const f = e.target.files?.[0]
-                              if (f) void uploadImage(f)
-                              e.target.value = ''
-                            }}
-                          />
-                        </label>
-                      </>
-                    )}
+                    <Link to="/library" className="lt-btn">
+                      去素材库上传
+                    </Link>
                     <Link
                       to={`/annotate?dataset=${active.id}`}
                       className="lt-btn"
@@ -601,7 +535,10 @@ function DatasetsInner() {
                   划分在发版时按比例随机指定；工作区不展示未分配状态。
                 </p>
                 {members.length === 0 ? (
-                  <StateBlock title="空数据集" description="入集后可在标注台画框。" />
+                  <StateBlock
+                    title="空数据集"
+                    description="请在素材库上传后，在下方从库勾选加入，或加入抽帧剩余帧。"
+                  />
                 ) : (
                   <div className="lt-thumb-grid">
                     {members.map((m) => (

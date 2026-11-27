@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { api, getUserId } from '../lib/api'
+import { api, getToken } from '../lib/api'
 import type {
   Annotation,
   Asset,
@@ -126,9 +126,10 @@ function AnnotateInner() {
   }, [tools, activeTool])
 
   const loadContent = useCallback(async (assetId: string) => {
-    const res = await fetch(`/api/v1/assets/${assetId}/content`, {
-      headers: { 'X-User-Id': getUserId() },
-    })
+    const token = getToken()
+    const headers: HeadersInit = {}
+    if (token) headers.Authorization = `Bearer ${token}`
+    const res = await fetch(`/api/v1/assets/${assetId}/content`, { headers })
     if (!res.ok) throw new Error('无法加载图片')
     const blob = await res.blob()
     setImageUrl((prev) => {
@@ -318,10 +319,16 @@ function AnnotateInner() {
   }
 
   useEffect(() => {
-    const el = stripRef.current?.querySelector<HTMLElement>(
+    const strip = stripRef.current
+    if (!strip) return
+    const el = strip.querySelector<HTMLElement>(
       `[data-member-index="${index}"]`,
     )
-    el?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+    if (!el) return
+    // 只用胶片条自身滚动；scrollIntoView 会连带滚动画布祖先，导致主图“飞出”视口
+    const left =
+      el.offsetLeft - (strip.clientWidth - el.clientWidth) / 2
+    strip.scrollTo({ left: Math.max(0, left), behavior: 'smooth' })
   }, [index])
 
   useEffect(() => {

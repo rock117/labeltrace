@@ -169,7 +169,7 @@ export function AnnotatorCanvas({
         background: 'var(--lt-bg-canvas)',
         borderRadius: 'var(--lt-radius-lg)',
         border: '1px solid var(--lt-border)',
-        overflow: 'auto',
+        overflow: 'hidden',
         minHeight: 320,
         position: 'relative',
       }}

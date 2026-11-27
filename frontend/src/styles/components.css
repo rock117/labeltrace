@@ -234,6 +234,7 @@
   padding: 0.65rem 0.75rem;
   overflow-x: auto;
   scroll-behavior: smooth;
+  overscroll-behavior-x: contain;
 }
 
 .lt-filmstrip-item {

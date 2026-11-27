@@ -207,28 +207,40 @@ function LibraryInner() {
     }
   }
 
-  const upload = async (file: File) => {
+  const upload = async (files: FileList | File[]) => {
     if (!folder) {
       setError('请先创建或选择一个目录，再上传')
       return
     }
+    const list = Array.from(files)
+    if (list.length === 0) return
     setBusy(true)
     setError(null)
     setMessage(null)
     try {
-      const fd = new FormData()
-      fd.append('file', file)
-      const asset = await api<Asset>(`/v1/folders/${folder.id}/assets`, {
-        method: 'POST',
-        body: fd,
-      })
-      await loadAssets(folder.id)
-      if (asset.media_kind === 'video') {
-        setSelectedVideo(asset)
-        setMessage(`已上传视频：${asset.filename}`)
-      } else {
-        setMessage(`已上传图片：${asset.filename}`)
+      let lastVideo: Asset | null = null
+      let nImg = 0
+      let nVid = 0
+      for (const file of list) {
+        const fd = new FormData()
+        fd.append('file', file)
+        const asset = await api<Asset>(`/v1/folders/${folder.id}/assets`, {
+          method: 'POST',
+          body: fd,
+        })
+        if (asset.media_kind === 'video') {
+          nVid += 1
+          lastVideo = asset
+        } else {
+          nImg += 1
+        }
       }
+      await loadAssets(folder.id)
+      if (lastVideo) setSelectedVideo(lastVideo)
+      const parts: string[] = []
+      if (nImg) parts.push(`${nImg} 张图片`)
+      if (nVid) parts.push(`${nVid} 个视频`)
+      setMessage(`已上传 ${parts.join('、')}`)
     } catch (e) {
       setError(formatError(e))
     } finally {
@@ -346,11 +358,11 @@ function LibraryInner() {
           <input
             type="file"
             accept="video/*,image/*"
+            multiple
             hidden
             disabled={busy || !folder}
             onChange={(e) => {
-              const f = e.target.files?.[0]
-              if (f) void upload(f)
+              if (e.target.files?.length) void upload(e.target.files)
               e.target.value = ''
             }}
           />
