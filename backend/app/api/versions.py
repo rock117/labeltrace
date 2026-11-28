@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -21,7 +21,7 @@ from app.models.dataset import Dataset
 from app.models.job import Job
 from app.models.version import DatasetVersion
 from app.services.assets import content_disposition_attachment
-from app.services.export_yolo import export_storage_key
+from app.services.export_yolo import export_storage_key, normalize_export_profile
 from app.services.member_sources import build_member_sources
 from app.services.versions import apply_version_to_workspace, publish_version
 from app.storage.factory import get_blob_store, get_default_write_backend
@@ -243,6 +243,10 @@ def _version_for_member(
     return v, ds
 
 
+class ExportIn(BaseModel):
+    profile: str = Field(default="detect", description="detect|segment|obb|pose|classify")
+
+
 @router.post(
     "/versions/{version_id}/export",
     response_model=ExportJobOut,
@@ -253,17 +257,24 @@ def start_yolo_export(
     user: Annotated[CurrentUser, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
     jobs: Annotated[JobService, Depends(get_job_service)],
+    body: ExportIn | None = None,
 ) -> ExportJobOut:
-    """入队 YOLO zip 导出；立即返回 job_id，完成后 GET .../export/download。"""
+    """入队 YOLO zip 导出；立即返回 job_id，完成后 GET .../export/download?profile=。"""
     v, _ds = _version_for_member(db, version_id, user.id)
+    profile = normalize_export_profile((body or ExportIn()).profile)
     job = jobs.enqueue(
         db,
         "yolo_export",
-        {"version_id": str(v.id), "requested_by": user.id},
+        {
+            "version_id": str(v.id),
+            "profile": profile,
+            "requested_by": user.id,
+        },
     )
     logger.info(
-        "yolo_export_enqueued version_id=%s job_id=%s user_id=%s",
+        "yolo_export_enqueued version_id=%s profile=%s job_id=%s user_id=%s",
         v.id,
+        profile,
         job.id,
         user.id,
     )
@@ -275,14 +286,16 @@ def download_yolo_export(
     version_id: UUID,
     user: Annotated[CurrentUser, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
+    profile: Annotated[str, Query()] = "detect",
 ) -> Response:
     """下载已生成的 YOLO zip；尚未导出或产物缺失时 404。"""
     v, ds = _version_for_member(db, version_id, user.id)
-    key = export_storage_key(ds.project_id, v.id)
+    prof = normalize_export_profile(profile)
+    key = export_storage_key(ds.project_id, v.id, prof)
     backend = get_default_write_backend()
-    download_name = f"{ds.name}_{v.name}.zip"
+    download_name = f"{ds.name}_{v.name}_{prof}.zip"
 
-    # 优先用本版本最近一次成功导出的 backend/key/文件名
+    # 优先用本版本 + 剖面最近一次成功导出的 backend/key/文件名
     for j in db.scalars(
         select(Job)
         .where(Job.job_type == "yolo_export", Job.status == "succeeded")
@@ -294,6 +307,11 @@ def download_yolo_export(
         if str(payload.get("version_id")) != str(v.id) and str(
             result.get("versionId")
         ) != str(v.id):
+            continue
+        job_profile = normalize_export_profile(
+            payload.get("profile") or result.get("profile") or "detect"
+        )
+        if job_profile != prof:
             continue
         backend = str(result.get("storageBackend") or backend)
         key = str(result.get("storageKey") or key)
@@ -307,8 +325,9 @@ def download_yolo_export(
 
     body = b"".join(store.get(key))
     logger.info(
-        "yolo_export_download version_id=%s bytes=%s key=%s",
+        "yolo_export_download version_id=%s profile=%s bytes=%s key=%s",
         version_id,
+        prof,
         len(body),
         key,
     )

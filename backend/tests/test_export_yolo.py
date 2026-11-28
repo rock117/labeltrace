@@ -223,3 +223,116 @@ def test_export_zip_matches_snapshot() -> None:
             headers=_h("exp-owner"),
         )
         assert dl2.status_code == 200
+
+
+def test_export_segment_profile_polygon_only() -> None:
+    """segment 剖面只写 polygon；同图 rect 被忽略。"""
+    png = _png(100, 100)
+    with TestClient(app) as client:
+        pid = client.post(
+            "/api/v1/projects", json={"name": "分割导出"}, headers=_h("seg-o")
+        ).json()["id"]
+        fid = client.post(
+            f"/api/v1/projects/{pid}/folders",
+            json={"name": "F"},
+            headers=_h("seg-o"),
+        ).json()["id"]
+        img = client.post(
+            f"/api/v1/folders/{fid}/assets",
+            headers=_h("seg-o"),
+            files={"file": ("a.png", png, "image/png")},
+        ).json()["id"]
+        ds = client.post(
+            f"/api/v1/projects/{pid}/datasets",
+            json={"name": "S"},
+            headers=_h("seg-o"),
+        ).json()["id"]
+        cid = client.post(
+            f"/api/v1/projects/{pid}/classes",
+            json={"name": "物"},
+            headers=_h("seg-o"),
+        ).json()["id"]
+        client.put(
+            f"/api/v1/datasets/{ds}/annotation-types",
+            json={"enabledAnnotationTypes": ["rect", "polygon"]},
+            headers=_h("seg-o"),
+        )
+        client.put(
+            f"/api/v1/datasets/{ds}/classes",
+            json={"classIds": [cid]},
+            headers=_h("seg-o"),
+        )
+        client.post(
+            f"/api/v1/datasets/{ds}/assets",
+            json={"asset_ids": [img]},
+            headers=_h("seg-o"),
+        )
+        assert (
+            client.put(
+                f"/api/v1/datasets/{ds}/assets/{img}/annotation",
+                headers=_h("seg-o"),
+                json={
+                    "shapes": {
+                        "format": "xyxy_abs",
+                        "items": [
+                            {
+                                "type": "rect",
+                                "classId": cid,
+                                "bbox": [0, 0, 10, 10],
+                            },
+                            {
+                                "type": "polygon",
+                                "classId": cid,
+                                "points": [[10, 10], [90, 10], [90, 90]],
+                            },
+                        ],
+                    },
+                    "status": "submitted",
+                },
+            ).status_code
+            == 200
+        )
+        ver = client.post(
+            f"/api/v1/datasets/{ds}/versions",
+            json={
+                "name": "v1",
+                "split_train": 1.0,
+                "split_val": 0.0,
+                "split_test": 0.0,
+            },
+            headers=_h("seg-o"),
+        ).json()["id"]
+
+        enq = client.post(
+            f"/api/v1/versions/{ver}/export",
+            headers=_h("seg-o"),
+            json={"profile": "segment"},
+        )
+        assert enq.status_code == 202, enq.text
+        job_id = enq.json()["job_id"]
+        job = None
+        for _ in range(80):
+            job = client.get(f"/api/v1/jobs/{job_id}", headers=_h("seg-o")).json()
+            if job["status"] in ("succeeded", "failed"):
+                break
+            import time
+
+            time.sleep(0.15)
+        assert job is not None and job["status"] == "succeeded", job
+        assert job["result"]["profile"] == "segment"
+
+        dl = client.get(
+            f"/api/v1/versions/{ver}/export/download?profile=segment",
+            headers=_h("seg-o"),
+        )
+        assert dl.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(dl.content)) as zf:
+            labels = [n for n in zf.namelist() if n.endswith(".txt")]
+            assert len(labels) == 1
+            body = zf.read(labels[0]).decode().strip()
+            parts = body.split()
+            # class + 3 points * 2 coords
+            assert parts[0] == "0"
+            assert len(parts) == 1 + 6
+            yaml_text = zf.read("data.yaml").decode()
+            assert "task: segment" in yaml_text

@@ -127,6 +127,7 @@
 ### 8b. YOLO 导出
 
 - [x] 8.3 实现按版本导出 YOLO zip（异步 job + 下载；包内文件名规则；空 label 负样本；UI 版本页）
+- [x] 8.3b 导出选剖面：detect/segment/obb/pose/classify；UI 下拉；产物分 key；mask 不进 YOLO 剖面
 - [x] 8.4 验证：素材仅留在历史版本中时硬删仍 409（`asset_has_references`），且该版本仍可导出
 
 ### 7c. 数据集类别（稳定 classId）

@@ -76,7 +76,7 @@ DatasetVersion.manifest 原样冻结 shapes（含 type）
 | **类型判别** | 每条 shape 必有 `type`；整图分类可用 `type=classification` 或文档级 `classification` 字段（二选一，实现时固定并写进 API） |
 | **数据集启用集** | `Dataset.enabled_annotation_types: string[]`，P0 默认 `["rect"]`；保存标注时只允许启用集内类型 |
 | **校验** | 按 type 分派 validator（已注册 rect/polygon/mask/keypoint/obb/classification）；未知/未启用 → 422 |
-| **导入/导出** | 按 type 选 codec；**当前仅 YOLO detect txt（rect）**；seg/pose/obb 包另阶段，不改 Asset/Version 主流程 |
+| **导入/导出** | 按导出**剖面**选 codec：`detect`/`segment`/`obb`/`pose`/`classify`；导入包 P0 仍以 detect 为主；不改 Asset/Version 主流程 |
 | **版本快照** | 不解析业务语义，整份 JSON 冻结；旧版含新 type 的数据仍可只读导出（若 codec 已注册） |
 | **前端工具** | 工具栏只渲染 `enabled_annotation_types ∩ 已实现工具`；未实现类型不展示，避免半成品入口 |
 | **mask 二进制** | 若 mask 过大不宜进 JSONB，用 `storage_backend`+`storage_key` 挂附件，shape 内只存引用——表结构预留，P0 不实现 |
@@ -439,8 +439,8 @@ P0 默认：**导入到新建数据集**（实现简单）；导入到已有空�
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/versions/{versionId}/export` | 入队 `yolo_export`；立即返回 job；产物 key=`proj/{project_id}/exports/{version_id}.zip` |
-| GET | `/versions/{versionId}/export/download` | 下载已生成 zip；尚未导出则 404 |
+| POST | `/versions/{versionId}/export` | body 可选 `{ profile }`（detect\|segment\|obb\|pose\|classify，默认 detect）；入队 `yolo_export`；产物 key=`…/exports/{version_id}_{profile}.zip` |
+| GET | `/versions/{versionId}/export/download?profile=` | 下载对应剖面 zip；尚未导出则 404 |
 
 项目成员（含 viewer）可导出/下载。
 

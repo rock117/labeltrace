@@ -40,8 +40,19 @@ function VersionsInner() {
   const [listLoading, setListLoading] = useState(true)
   const { is, run } = useActionPending()
   const [exportingId, setExportingId] = useState<string | null>(null)
+  const [exportProfile, setExportProfile] = useState<
+    'detect' | 'segment' | 'obb' | 'pose' | 'classify'
+  >('detect')
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+
+  const exportProfileLabel: Record<typeof exportProfile, string> = {
+    detect: '检测框',
+    segment: '多边形分割',
+    obb: '旋转框',
+    pose: '关键点',
+    classify: '整图分类',
+  }
 
   const selectDataset = useCallback(
     (id: string) => {
@@ -61,13 +72,17 @@ function VersionsInner() {
   const splitSum = Math.round((splitTrain + splitVal + splitTest) * 1000) / 1000
   const splitOk = Math.abs(splitSum - 1) < 0.001
 
-  const downloadExportZip = async (versionId: string) => {
+  const downloadExportZip = async (
+    versionId: string,
+    profile: typeof exportProfile,
+  ) => {
     const headers: Record<string, string> = {}
     const token = getToken()
     if (token) headers.Authorization = `Bearer ${token}`
-    const res = await fetch(`/api/v1/versions/${versionId}/export/download`, {
-      headers,
-    })
+    const res = await fetch(
+      `/api/v1/versions/${versionId}/export/download?profile=${encodeURIComponent(profile)}`,
+      { headers },
+    )
     if (!res.ok) {
       let detail: unknown = await res.text()
       try {
@@ -105,20 +120,25 @@ function VersionsInner() {
   }
 
   const exportYolo = async (versionId: string, versionName: string) => {
+    const profile = exportProfile
+    const profileName = exportProfileLabel[profile]
     setExportingId(versionId)
     setError(null)
-    setMessage(`正在导出 ${versionName}…`)
+    setMessage(`正在导出 ${versionName}（${profileName}）…`)
     try {
       const enq = await api<{ job_id: string; status: string }>(
         `/v1/versions/${versionId}/export`,
-        { method: 'POST' },
+        {
+          method: 'POST',
+          body: JSON.stringify({ profile }),
+        },
       )
       let job: JobStatus | null = null
       for (let i = 0; i < 120; i++) {
         job = await api<JobStatus>(`/v1/jobs/${enq.job_id}`)
         if (job.status === 'succeeded' || job.status === 'failed') break
         setMessage(
-          `正在导出 ${versionName}… ${job.status}` +
+          `正在导出 ${versionName}（${profileName}）… ${job.status}` +
             (job.progress != null ? ` ${Math.round(job.progress * 100)}%` : ''),
         )
         await new Promise((r) => setTimeout(r, 500))
@@ -130,9 +150,9 @@ function VersionsInner() {
       setMessage(
         `导出完成${n != null ? `（${n} 张）` : ''}，开始下载…`,
       )
-      await downloadExportZip(versionId)
+      await downloadExportZip(versionId, profile)
       setMessage(
-        `已下载 YOLO 包${n != null ? `（${n} 张）` : ''} · ${versionName}`,
+        `已下载 YOLO ${profileName} 包${n != null ? `（${n} 张）` : ''} · ${versionName}`,
       )
     } catch (e) {
       setError(formatError(e))
@@ -371,9 +391,28 @@ function VersionsInner() {
                 </option>
               ) : null}
             </select>
+            <span style={{ fontSize: 13, color: 'var(--lt-fg-muted)' }}>
+              导出剖面
+            </span>
+            <select
+              className="lt-select"
+              value={exportProfile}
+              onChange={(e) =>
+                setExportProfile(e.target.value as typeof exportProfile)
+              }
+              style={{ minWidth: 120 }}
+              aria-label="导出剖面"
+              title="一次只导出一种任务；笔刷 mask 暂不支持 YOLO 导出"
+            >
+              <option value="detect">检测框</option>
+              <option value="segment">多边形分割</option>
+              <option value="obb">旋转框</option>
+              <option value="pose">关键点</option>
+              <option value="classify">整图分类</option>
+            </select>
           </div>
           <p>
-            全部成员须已「提交」标注后方可发版。发版时才给仍启用的类别编 0、1、2…（按它们加入本数据集的先后；导入包沿用包内顺序），并按比例随机划分 train/val/test。导出使用该版本冻结的编号。
+            全部成员须已「提交」标注后方可发版。发版时才给仍启用的类别编 0、1、2…（按它们加入本数据集的先后；导入包沿用包内顺序），并按比例随机划分 train/val/test。导出按所选剖面只含对应标注类型。
           </p>
         </div>
         <Link to={`/annotate?dataset=${datasetId}`} className="lt-btn">
@@ -535,7 +574,9 @@ function VersionsInner() {
                     disabled={exportingId === v.id}
                     onClick={() => void exportYolo(v.id, v.name)}
                   >
-                    {exportingId === v.id ? '导出中…' : '导出 YOLO'}
+                    {exportingId === v.id
+                      ? '导出中…'
+                      : `导出 YOLO（${exportProfileLabel[exportProfile]}）`}
                   </button>
                   <button
                     type="button"

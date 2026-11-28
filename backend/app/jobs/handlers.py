@@ -41,7 +41,8 @@ def yolo_export_handler(job_id: UUID, payload: dict[str, Any]) -> dict[str, Any]
     raw = payload.get("version_id")
     if not raw:
         raise ValueError("yolo_export 缺少 version_id")
-    return run_yolo_export(_UUID(str(raw)))
+    profile = str(payload.get("profile") or "detect")
+    return run_yolo_export(_UUID(str(raw)), profile=profile)
 
 
 def yolo_import_handler(job_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
