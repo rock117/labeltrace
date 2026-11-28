@@ -228,9 +228,17 @@ def get_dataset(
 
 
 class DatasetPatch(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=256)
+    name: str | None = None
     enabled_annotation_types: list[str] | None = Field(
         default=None, alias="enabledAnnotationTypes"
+    )
+
+    model_config = {"populate_by_name": True}
+
+
+class EnabledAnnotationTypesIn(BaseModel):
+    enabled_annotation_types: list[str] = Field(
+        ..., alias="enabledAnnotationTypes"
     )
 
     model_config = {"populate_by_name": True}
@@ -283,12 +291,39 @@ def patch_dataset(
         name = body.name.strip()
         if not name:
             raise ValidationAppError("数据集名称无效")
+        if len(name) > 256:
+            raise ValidationAppError("数据集名称过长")
         ds.name = name
     if body.enabled_annotation_types is not None:
         _set_enabled_annotation_types(db, ds, body.enabled_annotation_types)
+    if body.name is None and body.enabled_annotation_types is None:
+        raise ValidationAppError("请至少提供 name 或 enabledAnnotationTypes")
     db.commit()
     db.refresh(ds)
     logger.info("dataset_patched dataset_id=%s", dataset_id)
+    return _dataset_out(db, ds)
+
+
+@router.put(
+    "/datasets/{dataset_id}/annotation-types",
+    response_model=DatasetOut,
+)
+def put_annotation_types(
+    dataset_id: UUID,
+    body: EnabledAnnotationTypesIn,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> DatasetOut:
+    """单独更新启用标注类型，避免与重命名 PATCH 混淆。"""
+    ds = db.get(Dataset, dataset_id)
+    if ds is None:
+        raise NotFoundError("数据集不存在")
+    m = get_membership(db, ds.project_id, user.id)
+    if m is None or not has_any_role(m, WRITE_ROLES):
+        raise ForbiddenError("权限不足")
+    _set_enabled_annotation_types(db, ds, body.enabled_annotation_types)
+    db.commit()
+    db.refresh(ds)
     return _dataset_out(db, ds)
 
 

@@ -63,7 +63,11 @@ export const ANNOTATION_TYPE_OPTIONS: {
   hint: string
 }[] = [
   { type: 'rect', label: '检测框', hint: '拖拽画出矩形' },
-  { type: 'polygon', label: '多边形', hint: '单击加点，双击或 Enter 闭合' },
+  {
+    type: 'polygon',
+    label: '多边形',
+    hint: '单击加点；悬停起点变红后单击闭合，或 Enter /「完成」',
+  },
   { type: 'mask', label: '笔刷', hint: '按住拖动画笔' },
   { type: 'keypoint', label: '关键点', hint: '单击落点，同类别连成一组' },
   { type: 'obb', label: '旋转框', hint: '拖拽画框，选中后可旋转' },

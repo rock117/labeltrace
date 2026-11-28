@@ -408,7 +408,8 @@ P0 默认：**导入到新建数据集**（实现简单）；导入到已有空�
 | POST | `/projects/{projectId}/datasets` | `{ name, enabledAnnotationTypes?: ["rect"] }`；默认启用当时项目词表的全部类别 |
 | GET | `/datasets/{datasetId}` | 含已启用 `classes: [{id,name,idx,color?}]`（id 为项目类别）、`enabledAnnotationTypes` |
 | PUT | `/datasets/{datasetId}/classes` | `{ classIds: uuid[] }` 按顺序启用词表子集；停用仍被本集标注引用的类别 → 409 |
-| PATCH | `/datasets/{datasetId}` | 可改启用类型（需校验策略） |
+| PATCH | `/datasets/{datasetId}` | 可改 `name` 和/或 `enabledAnnotationTypes` |
+| PUT | `/datasets/{datasetId}/annotation-types` | `{ enabledAnnotationTypes }` 单独改启用类型（停用仍被引用 → 409） |
 | GET/POST/DELETE/PATCH | `/datasets/{datasetId}/assets...` | 成员与 split；PATCH 可改 `assigneeUserId`（仅 owner）；列表对纯 annotator 默认只返回自己的 |
 | POST | `/datasets/{datasetId}/assignments` | `{ assetIds, assigneeUserId|null }` 批量分配/清空（仅 owner） |
 | PUT | `/datasets/{datasetId}/assets/{assetId}/annotation` | shapes 每项必含 `type`；按启用类型 + Registry 校验 |

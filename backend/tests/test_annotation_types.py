@@ -75,8 +75,8 @@ def test_enable_types_and_save_shapes() -> None:
         )
         assert bad.status_code == 422
 
-        patch = client.patch(
-            f"/api/v1/datasets/{did}",
+        patch = client.put(
+            f"/api/v1/datasets/{did}/annotation-types",
             headers=_h("u"),
             json={
                 "enabledAnnotationTypes": [
@@ -148,8 +148,8 @@ def test_enable_types_and_save_shapes() -> None:
         ]
 
         # 停用仍被引用的 polygon → 409
-        blocked = client.patch(
-            f"/api/v1/datasets/{did}",
+        blocked = client.put(
+            f"/api/v1/datasets/{did}/annotation-types",
             headers=_h("u"),
             json={"enabledAnnotationTypes": ["rect"]},
         )
@@ -168,8 +168,8 @@ def test_enable_types_and_save_shapes() -> None:
                 }
             },
         )
-        cleared = client.patch(
-            f"/api/v1/datasets/{did}",
+        cleared = client.put(
+            f"/api/v1/datasets/{did}/annotation-types",
             headers=_h("u"),
             json={"enabledAnnotationTypes": ["rect"]},
         )

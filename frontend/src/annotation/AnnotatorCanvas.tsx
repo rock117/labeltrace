@@ -66,6 +66,7 @@ export function AnnotatorCanvas({
   >(null)
   const [polyDraft, setPolyDraft] = useState<[number, number][]>([])
   const [polyCursor, setPolyCursor] = useState<[number, number] | null>(null)
+  const [hoverClose, setHoverClose] = useState(false)
   const [brushDraft, setBrushDraft] = useState<[number, number][] | null>(null)
   const trRef = useRef<Konva.Transformer>(null)
   const nodeRefs = useRef<(Konva.Node | null)[]>([])
@@ -102,6 +103,7 @@ export function AnnotatorCanvas({
   useEffect(() => {
     setPolyDraft([])
     setPolyCursor(null)
+    setHoverClose(false)
     setBrushDraft(null)
     setDrawingRect(null)
     setDraftRect(null)
@@ -128,12 +130,28 @@ export function AnnotatorCanvas({
     tr.getLayer()?.batchDraw()
   }, [selectedIndex, shapes, readOnly])
 
+  const finishPolygon = () => {
+    if (!activeClassId || polyDraft.length < 3) return
+    onChange([
+      ...shapes,
+      { type: 'polygon', classId: activeClassId, points: polyDraft },
+    ])
+    setPolyDraft([])
+    setPolyCursor(null)
+    setHoverClose(false)
+  }
+
+  const cancelPolygon = () => {
+    setPolyDraft([])
+    setPolyCursor(null)
+    setHoverClose(false)
+  }
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return
       if (e.key === 'Escape') {
-        setPolyDraft([])
-        setPolyCursor(null)
+        cancelPolygon()
         setBrushDraft(null)
         setDrawingRect(null)
         setDraftRect(null)
@@ -142,31 +160,28 @@ export function AnnotatorCanvas({
       if (
         (e.key === 'Enter' || e.key === 'NumpadEnter') &&
         activeTool === 'polygon' &&
-        polyDraft.length >= 3 &&
-        activeClassId
+        polyDraft.length >= 3
       ) {
         e.preventDefault()
-        onChange([
-          ...shapes,
-          { type: 'polygon', classId: activeClassId, points: polyDraft },
-        ])
-        setPolyDraft([])
-        setPolyCursor(null)
+        finishPolygon()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [
-    activeTool,
-    polyDraft,
-    activeClassId,
-    shapes,
-    onChange,
-    onSelect,
-  ])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTool, polyDraft, activeClassId, shapes, onChange, onSelect])
 
   const toImage = (sx: number, sy: number) =>
     [sx / scale, sy / scale] as [number, number]
+
+  const nearFirstVertex = (ix: number, iy: number) => {
+    if (polyDraft.length < 3) return false
+    const [fx, fy] = polyDraft[0]
+    const thresh = 12 / scale
+    const dx = ix - fx
+    const dy = iy - fy
+    return dx * dx + dy * dy <= thresh * thresh
+  }
 
   const hitUI = (e: Konva.KonvaEventObject<MouseEvent>) => {
     const kind = e.target.getClassName()
@@ -201,17 +216,19 @@ export function AnnotatorCanvas({
     }
 
     if (activeTool === 'polygon') {
-      if (e.target.getClassName() === 'Line' || e.target.getClassName() === 'Circle') {
+      const name = e.target.name?.() ?? ''
+      // 已完成多边形被点中 → 选中，不加点
+      if (
+        (e.target.getClassName() === 'Line' ||
+          e.target.getClassName() === 'Circle') &&
+        !name.startsWith('poly-draft')
+      ) {
         return
       }
       onSelect(null)
-      if (e.evt.detail === 2 && polyDraft.length >= 3) {
-        onChange([
-          ...shapes,
-          { type: 'polygon', classId: activeClassId, points: polyDraft },
-        ])
-        setPolyDraft([])
-        setPolyCursor(null)
+      // 点回起点（或起点大圆）→ 闭合
+      if (name === 'poly-draft-0' || nearFirstVertex(ix, iy)) {
+        finishPolygon()
         return
       }
       setPolyDraft((prev) => [...prev, [ix, iy]])
@@ -377,12 +394,48 @@ export function AnnotatorCanvas({
 
   return (
     <div ref={containerRef} style={{ width: '100%', minHeight: 320 }}>
+      {activeTool === 'polygon' && !readOnly && polyDraft.length > 0 ? (
+        <div
+          style={{
+            display: 'flex',
+            gap: 8,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            marginBottom: 8,
+            fontSize: 13,
+            color: 'var(--lt-fg-muted)',
+          }}
+        >
+          <span>
+            已点 {polyDraft.length} 个角
+            {polyDraft.length >= 3
+              ? ' · 悬停起点变红后单击闭合，或 Enter /「完成」'
+              : ' · 至少 3 点才能闭合'}
+          </span>
+          <button
+            type="button"
+            className="lt-btn lt-btn-primary"
+            disabled={polyDraft.length < 3}
+            onClick={finishPolygon}
+          >
+            完成
+          </button>
+          <button type="button" className="lt-btn" onClick={cancelPolygon}>
+            取消
+          </button>
+        </div>
+      ) : null}
       <Stage
         width={stageSize.w}
         height={stageSize.h}
         onMouseDown={onMouseDown}
         onMousemove={onMouseMove}
         onMouseup={onMouseUp}
+        onDblClick={() => {
+          if (activeTool === 'polygon' && polyDraft.length >= 3) {
+            finishPolygon()
+          }
+        }}
         onMouseLeave={() => {
           if (brushDraft) finishBrush()
           else onMouseUp()
@@ -604,15 +657,33 @@ export function AnnotatorCanvas({
               dash={[6, 4]}
             />
           ) : null}
-          {polyDraft.map(([x, y], i) => (
-            <Circle
-              key={`pd-${i}`}
-              x={x * scale}
-              y={y * scale}
-              radius={4}
-              fill={activeColor}
-            />
-          ))}
+          {polyDraft.map(([x, y], i) => {
+            const isFirst = i === 0
+            const canClose = polyDraft.length >= 3 && isFirst
+            const hot = canClose && hoverClose
+            return (
+              <Circle
+                key={`pd-${i}`}
+                name={`poly-draft-${i}`}
+                x={x * scale}
+                y={y * scale}
+                radius={hot ? 10 : 4}
+                fill={hot ? '#dc2626' : activeColor}
+                stroke={hot ? '#fff' : undefined}
+                strokeWidth={hot ? 2 : 0}
+                hitStrokeWidth={canClose ? 16 : 0}
+                onMouseEnter={() => {
+                  if (canClose) setHoverClose(true)
+                }}
+                onMouseLeave={() => setHoverClose(false)}
+                onMouseDown={(ev) => {
+                  if (!canClose) return
+                  ev.cancelBubble = true
+                  finishPolygon()
+                }}
+              />
+            )
+          })}
 
           {brushDraft && brushDraft.length > 0 ? (
             <Line

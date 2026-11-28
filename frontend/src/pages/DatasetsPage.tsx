@@ -149,10 +149,13 @@ function DatasetsInner() {
     setError(null)
     await run('ann-types', async () => {
       try {
-        const ds = await api<Dataset>(`/v1/datasets/${active.id}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ enabledAnnotationTypes: types }),
-        })
+        const ds = await api<Dataset>(
+          `/v1/datasets/${active.id}/annotation-types`,
+          {
+            method: 'PUT',
+            body: JSON.stringify({ enabledAnnotationTypes: types }),
+          },
+        )
         setActive(ds)
         setEnabledTypes(
           ds.enabled_annotation_types?.length

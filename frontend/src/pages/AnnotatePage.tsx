@@ -1203,10 +1203,10 @@ function AnnotateInner() {
                 }}
               >
                 {toolHint(tools, activeTool)}
-                {activeTool === 'polygon'
-                  ? ' · Esc 取消'
-                  : activeTool === 'classification'
-                    ? ' · 再点一次取消标签'
+                {activeTool === 'classification'
+                  ? ' · 再点一次取消标签'
+                  : activeTool === 'polygon'
+                    ? ''
                     : ' · Del 删选中 / 末条'}
               </p>
             </div>
