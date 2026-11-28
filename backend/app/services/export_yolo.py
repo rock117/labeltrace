@@ -151,13 +151,38 @@ def export_storage_key(project_id: UUID, version_id: UUID) -> str:
     return f"proj/{project_id}/exports/{version_id}.zip"
 
 
+def _version_class_names(raw: Any) -> list[str]:
+    names: list[str] = []
+    if not isinstance(raw, list):
+        return names
+    for item in raw:
+        if isinstance(item, str):
+            names.append(item)
+        elif isinstance(item, dict) and item.get("name") is not None:
+            names.append(str(item["name"]))
+    return names
+
+
+def _class_id_to_index(raw: Any) -> dict[str, int]:
+    mapping: dict[str, int] = {}
+    if not isinstance(raw, list):
+        return mapping
+    for i, item in enumerate(raw):
+        if isinstance(item, dict) and item.get("id") is not None:
+            mapping[str(item["id"])] = i
+        elif isinstance(item, str):
+            mapping[f"legacy-{i}"] = i
+    return mapping
+
+
 def build_yolo_zip_bytes(
     db: Session,
     version: DatasetVersion,
     dataset: Dataset,
 ) -> tuple[bytes, dict[str, Any]]:
     """根据版本快照组装 zip 字节与统计。"""
-    classes = [str(c) for c in (version.classes or [])]
+    classes = _version_class_names(version.classes)
+    id_to_idx = _class_id_to_index(version.classes)
     entries = list((version.manifest or {}).get("entries") or [])
     if not entries:
         raise ValidationAppError("版本无成员，无法导出")
@@ -223,7 +248,19 @@ def build_yolo_zip_bytes(
                 bbox = item.get("bbox")
                 if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
                     continue
-                cls_idx = int(item.get("cls") or 0)
+                cid = item.get("classId")
+                if cid is not None and str(cid) in id_to_idx:
+                    cls_idx = id_to_idx[str(cid)]
+                elif item.get("cls") is not None:
+                    # 旧快照兼容
+                    cls_idx = int(item.get("cls") or 0)
+                else:
+                    logger.warning(
+                        "export_missing_class asset_id=%s item=%s",
+                        asset_id,
+                        item,
+                    )
+                    continue
                 if classes and (cls_idx < 0 or cls_idx >= len(classes)):
                     logger.warning(
                         "export_cls_out_of_range asset_id=%s cls=%s nc=%s",
@@ -231,6 +268,7 @@ def build_yolo_zip_bytes(
                         cls_idx,
                         len(classes),
                     )
+                    continue
                 yolo = xyxy_to_yolo(list(bbox), int(w), int(h))
                 if yolo is None:
                     continue

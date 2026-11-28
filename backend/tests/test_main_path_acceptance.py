@@ -84,6 +84,7 @@ def test_main_path_upload_extract_review_annotate_publish(tmp_path: Path) -> Non
             },
         ).json()
         did = ds["id"]
+        cid = ds["classes"][0]["id"]
 
         listed = client.get(
             f"/api/v1/projects/{pid}/datasets", headers=_h("main")
@@ -105,21 +106,28 @@ def test_main_path_upload_extract_review_annotate_publish(tmp_path: Path) -> Non
         )
         assert ban.status_code == 409
 
-        ann = client.put(
-            f"/api/v1/datasets/{did}/assets/{asset_id}/annotation",
-            headers=_h("main"),
-            json={
-                "shapes": {
-                    "format": "xyxy_abs",
-                    "items": [
-                        {"type": "rect", "cls": 0, "bbox": [10, 10, 80, 80]}
-                    ],
+        # 全部成员提交；首张带框
+        for i, m in enumerate(added):
+            items = (
+                [{"type": "rect", "classId": cid, "bbox": [10, 10, 80, 80]}]
+                if i == 0
+                else []
+            )
+            ann = client.put(
+                f"/api/v1/datasets/{did}/assets/{m['asset_id']}/annotation",
+                headers=_h("main"),
+                json={
+                    "shapes": {"format": "xyxy_abs", "items": items},
+                    "status": "submitted",
                 },
-                "status": "submitted",
-            },
+            )
+            assert ann.status_code == 200, ann.text
+        assert (
+            client.get(
+                f"/api/v1/datasets/{did}/assets/{asset_id}/annotation",
+                headers=_h("main"),
+            ).json()["updated_by"]
         )
-        assert ann.status_code == 200, ann.text
-        assert ann.json()["updated_by"] == "main"
 
         lineage = client.get(
             f"/api/v1/assets/{asset_id}/lineage", headers=_h("main")

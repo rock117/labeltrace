@@ -110,7 +110,7 @@ FastAPI（鉴权、领域用例）
 | Asset | 媒体素材；`media_kind`：`image` \| `video` \| `frame`；存储与可见性字段同前；frame 另含 `parent_video_id`、`frame_index` |
 | Tag / AssetTag | 扁平标签 |
 | Dataset | 数据集；工作区类别；**`enabled_annotation_types`** |
-| DatasetClass | 有序类别名（检测/分割等共用 names；pose kpt 名可另挂元数据） |
+| DatasetClass | 数据集工作区类别：稳定 `id` + `name` + 顺序 `idx`（+ 可选 `color`）；标注引用 `classId`；YOLO 数字 id 仅导出/导入编解码 |
 | DatasetAsset | 引用 + `split` |
 | Annotation | `(dataset_id, asset_id)`；`shapes` 为带 `type` 的异构列表 |
 | DatasetVersion | 不可变快照（含当时 `enabled_annotation_types` + shapes） |
@@ -357,12 +357,12 @@ frame_extract_jobs(
 {
   "format": "xyxy_abs",
   "items": [
-    { "type": "rect", "cls": 0, "bbox": [10, 20, 110, 220] }
+    { "type": "rect", "classId": "<dataset_class_uuid>", "bbox": [10, 20, 110, 220] }
   ]
 }
 ```
 
-发版时冻结：`classes`、`enabled_annotation_types`、每条成员的 `shapes`。扩展新类型时只增加 item 形态与 Registry 实现，不改 Version 主表。
+发版时冻结：`classes`（`[{id,name},…]` 有序）、`enabled_annotation_types`、每条成员的 `shapes`。扩展新类型时只增加 item 形态与 Registry 实现，不改 Version 主表。YOLO 导出时按该有序列表将 `classId` 映射为 `0..n-1`。
 
 ### D5. 导入流程（YOLO 包）
 
@@ -402,8 +402,9 @@ P0 默认：**导入到新建数据集**（实现简单）；导入到已有空�
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/projects/{projectId}/datasets` | `{ name, classes, enabledAnnotationTypes?: ["rect"] }` |
-| GET | `/datasets/{datasetId}` | 含 `classes`、`enabledAnnotationTypes` |
+| POST | `/projects/{projectId}/datasets` | `{ name, classes?: string[]\|{name}[], enabledAnnotationTypes?: ["rect"] }` → 每类生成稳定 id |
+| GET | `/datasets/{datasetId}` | 含 `classes: [{id,name,idx,color?}]`、`enabledAnnotationTypes` |
+| PUT | `/datasets/{datasetId}/classes` | 整表替换有序列表（增/改名/调序/删）；删仍被引用类 → 409 |
 | PATCH | `/datasets/{datasetId}` | 可改启用类型（需校验策略） |
 | GET/POST/DELETE/PATCH | `/datasets/{datasetId}/assets...` | 成员与 split（同前） |
 | PUT | `/datasets/{datasetId}/assets/{assetId}/annotation` | shapes 每项必含 `type`；按启用类型 + Registry 校验 |

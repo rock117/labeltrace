@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -27,11 +27,23 @@ from app.models.asset import Asset
 from app.models.dataset import Dataset, DatasetAsset, DatasetClass
 from app.models.frame_extract_job import FrameExtractJob
 from app.models.project import Membership
+from app.services.dataset_classes import (
+    classes_as_dicts,
+    create_classes_from_names,
+    replace_classes,
+)
 
 router = APIRouter(tags=["datasets"])
 logger = get_logger("labeltrace.api.datasets")
 
 Split = Literal["train", "val", "test", "unassigned"]
+
+
+class DatasetClassOut(BaseModel):
+    id: UUID
+    name: str
+    idx: int
+    color: str | None = None
 
 
 class DatasetCreate(BaseModel):
@@ -49,10 +61,14 @@ class DatasetOut(BaseModel):
     id: UUID
     project_id: UUID
     name: str
-    classes: list[str]
+    classes: list[DatasetClassOut]
     enabled_annotation_types: list[str]
 
     model_config = {"from_attributes": True}
+
+
+class ClassesReplaceIn(BaseModel):
+    classes: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AddAssetsIn(BaseModel):
@@ -74,18 +90,20 @@ class AddExtractFramesIn(BaseModel):
 
 
 def _dataset_out(db: Session, ds: Dataset) -> DatasetOut:
-    classes = list(
-        db.scalars(
-            select(DatasetClass)
-            .where(DatasetClass.dataset_id == ds.id)
-            .order_by(DatasetClass.idx)
-        ).all()
-    )
+    rows = classes_as_dicts(db, ds.id)
     return DatasetOut(
         id=ds.id,
         project_id=ds.project_id,
         name=ds.name,
-        classes=[c.name for c in classes],
+        classes=[
+            DatasetClassOut(
+                id=UUID(r["id"]),
+                name=r["name"],
+                idx=r["idx"],
+                color=r.get("color"),
+            )
+            for r in rows
+        ],
         enabled_annotation_types=list(ds.enabled_annotation_types or ["rect"]),
     )
 
@@ -109,8 +127,7 @@ def create_dataset(
     )
     db.add(ds)
     db.flush()
-    for i, name in enumerate(body.classes):
-        db.add(DatasetClass(dataset_id=ds.id, idx=i, name=name.strip()))
+    create_classes_from_names(db, ds.id, list(body.classes or []))
     db.commit()
     db.refresh(ds)
     logger.info("dataset_created dataset_id=%s", ds.id)
@@ -175,6 +192,25 @@ def rename_dataset(
     db.commit()
     db.refresh(ds)
     logger.info("dataset_renamed dataset_id=%s name=%s", dataset_id, name)
+    return _dataset_out(db, ds)
+
+
+@router.put("/datasets/{dataset_id}/classes", response_model=DatasetOut)
+def put_dataset_classes(
+    dataset_id: UUID,
+    body: ClassesReplaceIn,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> DatasetOut:
+    """整表替换工作区类别（增/改名/调序/删）；删被引用类返回 409。"""
+    replace_classes(
+        db,
+        dataset_id=dataset_id,
+        items=list(body.classes or []),
+        user_id=user.id,
+    )
+    ds = db.get(Dataset, dataset_id)
+    assert ds is not None
     return _dataset_out(db, ds)
 
 

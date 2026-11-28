@@ -120,6 +120,11 @@
 - [x] 8.3 实现按版本导出 YOLO zip（异步 job + 下载；包内文件名规则；空 label 负样本；UI 版本页）
 - [x] 8.4 验证：素材仅留在历史版本中时硬删仍 409（`asset_has_references`），且该版本仍可导出
 
+### 7c. 数据集类别（稳定 classId）
+
+- [x] 7c.1 shapes 改用 `classId`；DatasetClass 可维护（PUT classes）；发版冻结 `[{id,name}]`；导出按序映射 YOLO 下标
+- [x] 7c.2 数据集页类别编辑 UI；标注台按类选色/快捷键；无类或非法 classId 拒绝发版
+
 ## 后续规划（不阻塞本 change）
 
 - 视频时间轴 scrub UI、跨帧 track_id

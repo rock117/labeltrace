@@ -5,6 +5,7 @@ import type {
   Asset,
   Dataset,
   DatasetAsset,
+  DatasetClass,
   Folder,
   MemberSource,
   ProjectExtractJob,
@@ -54,6 +55,8 @@ function DatasetsInner() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [importName, setImportName] = useState('')
+  const [classDraft, setClassDraft] = useState<DatasetClass[]>([])
+  const [newClassName, setNewClassName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -79,6 +82,7 @@ function DatasetsInner() {
         api<MemberSource[]>(`/v1/datasets/${id}/member-sources`),
       ])
       setActive(ds)
+      setClassDraft(ds.classes.map((c) => ({ ...c })))
       setMembers(mem)
       setSources(src)
       setPickedMembers(new Set())
@@ -87,6 +91,32 @@ function DatasetsInner() {
     },
     [loadExtractJobs],
   )
+
+  const saveClasses = async () => {
+    if (!active) return
+    setBusy(true)
+    setError(null)
+    try {
+      const ds = await api<Dataset>(`/v1/datasets/${active.id}/classes`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          classes: classDraft.map((c) => ({
+            id: c.id.startsWith('tmp-') ? undefined : c.id,
+            name: c.name,
+            color: c.color ?? null,
+          })),
+        }),
+      })
+      setActive(ds)
+      setClassDraft(ds.classes.map((c) => ({ ...c })))
+      setDatasets((prev) => prev.map((d) => (d.id === ds.id ? ds : d)))
+      setMessage(`已更新类别（${ds.classes.length}）`)
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -506,7 +536,9 @@ function DatasetsInner() {
                   <div>
                     <h2 style={{ margin: 0 }}>{active.name}</h2>
                     <p style={{ margin: '0.25rem 0 0', color: 'var(--lt-fg-muted)' }}>
-                      类别：{active.classes.join(', ') || '（无）'} · 工具：
+                      类别：
+                      {active.classes.map((c) => c.name).join(', ') || '（无）'} ·
+                      工具：
                       {active.enabled_annotation_types.join(', ')}
                     </p>
                   </div>
@@ -535,6 +567,148 @@ function DatasetsInner() {
                       版本
                     </Link>
                   </div>
+                </div>
+              </div>
+
+              <div className="lt-panel" style={{ padding: '1rem', marginBottom: '1rem' }}>
+                <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem' }}>类别</h3>
+                <p
+                  style={{
+                    margin: '0 0 0.75rem',
+                    fontSize: 13,
+                    color: 'var(--lt-fg-muted)',
+                  }}
+                >
+                  标注引用稳定 id；改名/调序不打乱已有框。删除仍被引用的类别会被拒绝。导出
+                  YOLO 时按此顺序编号 0..n-1。
+                </p>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  {classDraft.map((c, i) => (
+                    <div
+                      key={c.id}
+                      style={{
+                        display: 'flex',
+                        gap: 8,
+                        flexWrap: 'wrap',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <span className="mono" style={{ width: 24, opacity: 0.6 }}>
+                        {i}
+                      </span>
+                      <input
+                        className="lt-input"
+                        value={c.name}
+                        onChange={(e) => {
+                          const name = e.target.value
+                          setClassDraft((prev) =>
+                            prev.map((row, j) =>
+                              j === i ? { ...row, name } : row,
+                            ),
+                          )
+                        }}
+                        style={{ maxWidth: 200 }}
+                      />
+                      <input
+                        type="color"
+                        title="颜色"
+                        value={c.color || '#0f766e'}
+                        onChange={(e) => {
+                          const color = e.target.value.toUpperCase()
+                          setClassDraft((prev) =>
+                            prev.map((row, j) =>
+                              j === i ? { ...row, color } : row,
+                            ),
+                          )
+                        }}
+                        style={{ width: 36, height: 32, padding: 0, border: 'none' }}
+                      />
+                      <button
+                        type="button"
+                        className="lt-btn"
+                        disabled={busy || i === 0}
+                        onClick={() => {
+                          setClassDraft((prev) => {
+                            const next = [...prev]
+                            ;[next[i - 1], next[i]] = [next[i], next[i - 1]]
+                            return next
+                          })
+                        }}
+                      >
+                        上移
+                      </button>
+                      <button
+                        type="button"
+                        className="lt-btn"
+                        disabled={busy || i >= classDraft.length - 1}
+                        onClick={() => {
+                          setClassDraft((prev) => {
+                            const next = [...prev]
+                            ;[next[i], next[i + 1]] = [next[i + 1], next[i]]
+                            return next
+                          })
+                        }}
+                      >
+                        下移
+                      </button>
+                      <button
+                        type="button"
+                        className="lt-btn lt-btn-danger"
+                        disabled={busy}
+                        onClick={() =>
+                          setClassDraft((prev) => prev.filter((_, j) => j !== i))
+                        }
+                      >
+                        删除
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    flexWrap: 'wrap',
+                    marginTop: 10,
+                    alignItems: 'center',
+                  }}
+                >
+                  <input
+                    className="lt-input"
+                    placeholder="新类别名"
+                    value={newClassName}
+                    onChange={(e) => setNewClassName(e.target.value)}
+                    style={{ maxWidth: 180 }}
+                  />
+                  <button
+                    type="button"
+                    className="lt-btn"
+                    disabled={busy || !newClassName.trim()}
+                    onClick={() => {
+                      const name = newClassName.trim()
+                      if (!name) return
+                      setClassDraft((prev) => [
+                        ...prev,
+                        {
+                          id: `tmp-${crypto.randomUUID()}`,
+                          name,
+                          idx: prev.length,
+                          color: null,
+                        },
+                      ])
+                      setNewClassName('')
+                    }}
+                  >
+                    添加
+                  </button>
+                  <button
+                    type="button"
+                    className="lt-btn lt-btn-primary"
+                    disabled={busy}
+                    onClick={() => void saveClasses()}
+                  >
+                    保存类别
+                  </button>
                 </div>
               </div>
 

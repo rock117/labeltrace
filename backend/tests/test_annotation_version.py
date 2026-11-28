@@ -1,5 +1,7 @@
 """标注、发版、memberSources、血缘（主体路径，不含导入导出）。"""
 
+from uuid import uuid4
+
 from fastapi.testclient import TestClient
 
 from app.annotation.registry import INTERNAL_FORMAT, get_registry
@@ -13,17 +15,25 @@ def _h(u: str) -> dict[str, str]:
 def test_format_xyxy_abs_unit() -> None:
     assert INTERNAL_FORMAT == "xyxy_abs"
     reg = get_registry()
+    cid = str(uuid4())
     ok = reg.validate_shapes(
         {
             "format": "xyxy_abs",
-            "items": [{"type": "rect", "cls": 0, "bbox": [1, 2, 10, 20]}],
+            "items": [
+                {"type": "rect", "classId": cid, "bbox": [1, 2, 10, 20]}
+            ],
         },
         enabled_types=["rect"],
+        allowed_class_ids={cid},
     )
     assert ok["items"][0]["bbox"] == [1.0, 2.0, 10.0, 20.0]
+    assert ok["items"][0]["classId"] == cid
     try:
         reg.validate_shapes(
-            {"format": "xyxy_abs", "items": [{"type": "polygon", "points": []}]},
+            {
+                "format": "xyxy_abs",
+                "items": [{"type": "polygon", "classId": cid, "points": []}],
+            },
             enabled_types=["rect"],
         )
         raised = False
@@ -49,16 +59,28 @@ def test_annotation_isolation_publish_and_lineage() -> None:
             files={"file": ("x.png", png, "image/png")},
         ).json()["id"]
 
-        d1 = client.post(
+        d1_body = client.post(
             f"/api/v1/projects/{pid}/datasets",
-            json={"name": "A", "classes": ["缺陷"], "enabled_annotation_types": ["rect"]},
+            json={
+                "name": "A",
+                "classes": ["缺陷"],
+                "enabled_annotation_types": ["rect"],
+            },
             headers=_h("admin"),
-        ).json()["id"]
-        d2 = client.post(
+        ).json()
+        d2_body = client.post(
             f"/api/v1/projects/{pid}/datasets",
-            json={"name": "B", "classes": ["缺陷"], "enabled_annotation_types": ["rect"]},
+            json={
+                "name": "B",
+                "classes": ["缺陷"],
+                "enabled_annotation_types": ["rect"],
+            },
             headers=_h("admin"),
-        ).json()["id"]
+        ).json()
+        d1 = d1_body["id"]
+        d2 = d2_body["id"]
+        c1 = d1_body["classes"][0]["id"]
+        c2 = d2_body["classes"][0]["id"]
 
         # 非成员拒绝
         assert (
@@ -67,7 +89,13 @@ def test_annotation_isolation_publish_and_lineage() -> None:
                 json={
                     "shapes": {
                         "format": "xyxy_abs",
-                        "items": [{"type": "rect", "cls": 0, "bbox": [0, 0, 5, 5]}],
+                        "items": [
+                            {
+                                "type": "rect",
+                                "classId": c1,
+                                "bbox": [0, 0, 5, 5],
+                            }
+                        ],
                     }
                 },
                 headers=_h("admin"),
@@ -91,7 +119,13 @@ def test_annotation_isolation_publish_and_lineage() -> None:
             json={
                 "shapes": {
                     "format": "xyxy_abs",
-                    "items": [{"type": "rect", "cls": 0, "bbox": [1, 1, 50, 50]}],
+                    "items": [
+                        {
+                            "type": "rect",
+                            "classId": c1,
+                            "bbox": [1, 1, 50, 50],
+                        }
+                    ],
                 },
                 "status": "submitted",
             },
@@ -103,7 +137,13 @@ def test_annotation_isolation_publish_and_lineage() -> None:
             json={
                 "shapes": {
                     "format": "xyxy_abs",
-                    "items": [{"type": "rect", "cls": 0, "bbox": [9, 9, 20, 20]}],
+                    "items": [
+                        {
+                            "type": "rect",
+                            "classId": c2,
+                            "bbox": [9, 9, 20, 20],
+                        }
+                    ],
                 }
             },
             headers=_h("admin"),
@@ -118,8 +158,8 @@ def test_annotation_isolation_publish_and_lineage() -> None:
         ).json()
         assert g1["shapes"]["items"][0]["bbox"][0] == 1.0
         assert g2["shapes"]["items"][0]["bbox"][0] == 9.0
-        assert g1["updated_by"]  # 登录用户 id
-
+        assert g1["shapes"]["items"][0]["classId"] == c1
+        assert g1["updated_by"]
 
         # polygon 拒绝
         bad = client.put(
@@ -127,18 +167,55 @@ def test_annotation_isolation_publish_and_lineage() -> None:
             json={
                 "shapes": {
                     "format": "xyxy_abs",
-                    "items": [{"type": "polygon", "cls": 0, "points": []}],
+                    "items": [
+                        {"type": "polygon", "classId": c1, "points": []}
+                    ],
                 }
             },
             headers=_h("admin"),
         )
         assert bad.status_code == 422
 
+        # 改名保留 classId；删除被引用类 409
+        renamed = client.put(
+            f"/api/v1/datasets/{d1}/classes",
+            json={"classes": [{"id": c1, "name": "缺陷-A"}]},
+            headers=_h("admin"),
+        )
+        assert renamed.status_code == 200, renamed.text
+        assert renamed.json()["classes"][0]["name"] == "缺陷-A"
+        assert renamed.json()["classes"][0]["id"] == c1
+        blocked = client.put(
+            f"/api/v1/datasets/{d1}/classes",
+            json={"classes": [{"name": "别的"}]},
+            headers=_h("admin"),
+        )
+        assert blocked.status_code == 409, blocked.text
+
         sources = client.get(
             f"/api/v1/datasets/{d1}/member-sources", headers=_h("admin")
         )
         assert sources.status_code == 200
         assert any(s.get("kind") == "upload" for s in sources.json())
+
+        # 发版前须 submitted；上面 put1 已 submitted，put2 后 d1 可能被改成 draft
+        client.put(
+            f"/api/v1/datasets/{d1}/assets/{img}/annotation",
+            json={
+                "shapes": {
+                    "format": "xyxy_abs",
+                    "items": [
+                        {
+                            "type": "rect",
+                            "classId": c1,
+                            "bbox": [1, 1, 50, 50],
+                        }
+                    ],
+                },
+                "status": "submitted",
+            },
+            headers=_h("admin"),
+        )
 
         v1 = client.post(
             f"/api/v1/datasets/{d1}/versions",
@@ -150,6 +227,8 @@ def test_annotation_isolation_publish_and_lineage() -> None:
         frozen_sources = list(v1.json()["member_sources"])
         assert v1.json()["entry_count"] == 1
         assert v1.json()["change_summary"]["added"] == 1
+        assert v1.json()["classes"][0]["id"] == c1
+        assert v1.json()["classes"][0]["name"] == "缺陷-A"
 
         # 改工作区后版本不变
         client.put(
@@ -157,8 +236,15 @@ def test_annotation_isolation_publish_and_lineage() -> None:
             json={
                 "shapes": {
                     "format": "xyxy_abs",
-                    "items": [{"type": "rect", "cls": 0, "bbox": [0, 0, 2, 2]}],
-                }
+                    "items": [
+                        {
+                            "type": "rect",
+                            "classId": c1,
+                            "bbox": [0, 0, 2, 2],
+                        }
+                    ],
+                },
+                "status": "submitted",
             },
             headers=_h("admin"),
         )

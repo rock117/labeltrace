@@ -57,9 +57,14 @@
   max-width: 320px;
 }
 
+/* 用边框变色表示焦点；关掉全局 :focus-visible outline，避免双框 */
 .lt-input:focus,
-.lt-select:focus {
+.lt-select:focus,
+.lt-input:focus-visible,
+.lt-select:focus-visible {
+  outline: none;
   border-color: var(--lt-accent);
+  box-shadow: 0 0 0 1px var(--lt-accent);
 }
 
 .lt-panel {

@@ -42,12 +42,17 @@ class PublishIn(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class VersionClassOut(BaseModel):
+    id: str
+    name: str
+
+
 class VersionOut(BaseModel):
     id: UUID
     dataset_id: UUID
     name: str
     parent_id: UUID | None
-    classes: list[str]
+    classes: list[VersionClassOut]
     enabled_annotation_types: list[Any]
     member_sources: list[Any]
     change_summary: dict[str, Any] | None
@@ -59,6 +64,24 @@ class VersionOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+def _normalize_version_classes(raw: Any) -> list[VersionClassOut]:
+    """兼容旧快照 string[]；新快照 [{id,name}]。"""
+    out: list[VersionClassOut] = []
+    if not isinstance(raw, list):
+        return out
+    for i, item in enumerate(raw):
+        if isinstance(item, str):
+            out.append(VersionClassOut(id=f"legacy-{i}", name=item))
+        elif isinstance(item, dict) and item.get("name") is not None:
+            out.append(
+                VersionClassOut(
+                    id=str(item.get("id") or f"legacy-{i}"),
+                    name=str(item["name"]),
+                )
+            )
+    return out
+
+
 def _out(v: DatasetVersion) -> VersionOut:
     entries = (v.manifest or {}).get("entries") or []
     return VersionOut(
@@ -66,7 +89,7 @@ def _out(v: DatasetVersion) -> VersionOut:
         dataset_id=v.dataset_id,
         name=v.name,
         parent_id=v.parent_id,
-        classes=list(v.classes or []),
+        classes=_normalize_version_classes(v.classes),
         enabled_annotation_types=list(v.enabled_annotation_types or []),
         member_sources=list(v.member_sources or []),
         change_summary=v.change_summary,

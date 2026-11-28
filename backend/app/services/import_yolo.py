@@ -19,9 +19,10 @@ from app.core.logging import get_logger
 from app.db.session import SessionLocal
 from app.models.annotation import Annotation
 from app.models.asset import Asset
-from app.models.dataset import Dataset, DatasetAsset, DatasetClass
+from app.models.dataset import Dataset, DatasetAsset
 from app.models.dataset_import import DatasetImport
 from app.services.assets import _sha256, _storage_key
+from app.services.dataset_classes import create_classes_from_names, list_classes
 from app.services.export_yolo import image_size_from_bytes
 from app.storage.factory import get_blob_store, get_default_write_backend
 
@@ -100,14 +101,25 @@ def parse_data_yaml_names(text: str) -> list[str]:
 
 
 def yolo_line_to_xyxy(
-    parts: list[str], width: int, height: int
+    parts: list[str],
+    width: int,
+    height: int,
+    *,
+    class_ids: list[str],
 ) -> dict[str, Any] | None:
     if len(parts) < 5 or width <= 0 or height <= 0:
         return None
     try:
         cls_idx = int(float(parts[0]))
-        cx, cy, nw, nh = (float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4]))
+        cx, cy, nw, nh = (
+            float(parts[1]),
+            float(parts[2]),
+            float(parts[3]),
+            float(parts[4]),
+        )
     except ValueError:
+        return None
+    if cls_idx < 0 or cls_idx >= len(class_ids):
         return None
     bw = nw * width
     bh = nh * height
@@ -124,7 +136,7 @@ def yolo_line_to_xyxy(
         return None
     return {
         "type": "rect",
-        "cls": cls_idx,
+        "classId": class_ids[cls_idx],
         "bbox": [x1, y1, x2, y2],
     }
 
@@ -256,22 +268,14 @@ def parse_yolo_zip(zip_bytes: bytes) -> tuple[list[str], list[ParsedImage]]:
     return classes, parsed
 
 
-def _ensure_classes(db: Session, dataset_id: UUID, classes: list[str]) -> None:
-    existing = list(
-        db.scalars(
-            select(DatasetClass)
-            .where(DatasetClass.dataset_id == dataset_id)
-            .order_by(DatasetClass.idx)
-        ).all()
-    )
-    if existing:
-        # 已有类别：覆盖为导入包（空集导入场景）
-        for row in existing:
-            db.delete(row)
-        db.flush()
-    for i, name in enumerate(classes):
-        db.add(DatasetClass(dataset_id=dataset_id, idx=i, name=name.strip()))
+def _ensure_classes(db: Session, dataset_id: UUID, classes: list[str]) -> list[str]:
+    """覆盖为空集写入类别，返回有序 classId 列表。"""
+    existing = list_classes(db, dataset_id)
+    for row in existing:
+        db.delete(row)
     db.flush()
+    rows = create_classes_from_names(db, dataset_id, classes)
+    return [str(r.id) for r in rows]
 
 
 def run_dataset_import(import_id: UUID) -> dict[str, Any]:
@@ -306,7 +310,7 @@ def run_dataset_import(import_id: UUID) -> dict[str, Any]:
         if member_count and member_count > 0:
             raise ValidationAppError("目标数据集非空，P0 仅支持导入到新建或空数据集")
 
-        _ensure_classes(db, ds.id, classes)
+        class_ids = _ensure_classes(db, ds.id, classes)
 
         created = 0
         reused = 0
@@ -380,7 +384,9 @@ def run_dataset_import(import_id: UUID) -> dict[str, Any]:
                     if not line or line.startswith("#"):
                         continue
                     parts = line.split()
-                    shape = yolo_line_to_xyxy(parts, int(iw), int(ih))
+                    shape = yolo_line_to_xyxy(
+                        parts, int(iw), int(ih), class_ids=class_ids
+                    )
                     if shape is not None:
                         items.append(shape)
 
@@ -494,8 +500,7 @@ def create_dataset_import(
         )
         db.add(ds)
         db.flush()
-        for i, cname in enumerate(classes):
-            db.add(DatasetClass(dataset_id=ds.id, idx=i, name=cname.strip()))
+        create_classes_from_names(db, ds.id, classes)
     else:
         raise ValidationAppError("须提供 datasetName 或 datasetId")
 

@@ -52,6 +52,7 @@ class DatasetClass(Base):
     )
     idx: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
+    color: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
 class DatasetAsset(Base):

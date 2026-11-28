@@ -78,7 +78,13 @@ def put_annotation(
         raise ValidationAppError("素材不是该数据集成员，无法标注")
 
     enabled = list(ds.enabled_annotation_types or ["rect"])
-    shapes = get_registry().validate_shapes(body.shapes, enabled_types=enabled)
+    from app.services.dataset_classes import class_id_set
+
+    shapes = get_registry().validate_shapes(
+        body.shapes,
+        enabled_types=enabled,
+        allowed_class_ids=class_id_set(db, dataset_id),
+    )
 
     ann = db.scalar(
         select(Annotation).where(

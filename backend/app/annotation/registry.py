@@ -1,8 +1,9 @@
-"""按 type 校验 shapes；P0 仅注册 rect。"""
+"""按 type 校验 shapes；P0 仅注册 rect；类别用稳定 classId。"""
 
 from __future__ import annotations
 
 from typing import Any, Callable
+from uuid import UUID
 
 from app.core.errors import ValidationAppError
 from app.core.logging import get_logger
@@ -14,17 +15,19 @@ Validator = Callable[[dict[str, Any]], None]
 INTERNAL_FORMAT = "xyxy_abs"
 
 
+def _parse_class_id(raw: Any) -> str:
+    if raw is None or raw == "":
+        raise ValidationAppError("rect 缺少 classId")
+    try:
+        return str(UUID(str(raw)))
+    except (TypeError, ValueError) as exc:
+        raise ValidationAppError("rect.classId 须为 UUID") from exc
+
+
 def _validate_rect(item: dict[str, Any]) -> None:
     if item.get("type") != "rect":
         raise ValidationAppError("期望 type=rect")
-    if "cls" not in item:
-        raise ValidationAppError("rect 缺少 cls")
-    try:
-        cls = int(item["cls"])
-    except (TypeError, ValueError) as exc:
-        raise ValidationAppError("rect.cls 必须为整数") from exc
-    if cls < 0:
-        raise ValidationAppError("rect.cls 不可为负")
+    _parse_class_id(item.get("classId"))
     bbox = item.get("bbox")
     if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
         raise ValidationAppError("rect.bbox 须为 [x1,y1,x2,y2]")
@@ -52,6 +55,7 @@ class AnnotationTypeRegistry:
         shapes: dict[str, Any],
         *,
         enabled_types: list[str],
+        allowed_class_ids: set[str] | None = None,
     ) -> dict[str, Any]:
         if not isinstance(shapes, dict):
             raise ValidationAppError("shapes 须为对象")
@@ -81,9 +85,14 @@ class AnnotationTypeRegistry:
             if validator is None:
                 raise ValidationAppError(f"类型 {t} 服务端未注册")
             validator(raw)
+            class_id = _parse_class_id(raw.get("classId"))
+            if allowed_class_ids is not None and class_id not in allowed_class_ids:
+                raise ValidationAppError(
+                    f"shapes.items[{i}] classId 不属于本数据集"
+                )
             bbox = [float(v) for v in raw["bbox"]]
             normalized.append(
-                {"type": "rect", "cls": int(raw["cls"]), "bbox": bbox}
+                {"type": "rect", "classId": class_id, "bbox": bbox}
             )
         return {"format": INTERNAL_FORMAT, "items": normalized}
 

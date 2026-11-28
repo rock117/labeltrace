@@ -25,11 +25,15 @@
 - **THEN** 读取 A 得到 A 的框，读取 B 得到 B 的框
 
 ### Requirement: 检测框载荷（P0）
-P0 工作标注 SHALL 支持类型为检测框（`rect`）的 YOLO 检测几何，包含类别索引与边界框，坐标采用项目约定的内部格式。
+P0 工作标注 SHALL 支持类型为检测框（`rect`）的 YOLO 检测几何，包含稳定类别引用 `classId`（对应该数据集某类别 id）与边界框，坐标采用项目约定的内部格式。保存时 `classId` MUST 属于该数据集当前类别集合。
 
 #### Scenario: 框的读写一致
 - **WHEN** 客户端保存一组检测框后再次加载该标注
-- **THEN** 返回的类别索引与几何与保存时一致
+- **THEN** 返回的 `classId` 与几何与保存时一致
+
+#### Scenario: 拒绝未知类别
+- **WHEN** 客户端提交的 `classId` 不属于该数据集
+- **THEN** 系统拒绝该请求
 
 ### Requirement: Shape 类型可扩展
 每条几何 SHALL 带有类型判别字段 `type`；保存时每条 `type` MUST 属于该数据集的启用标注类型，且 MUST 为服务端已注册可校验的类型。P0 MUST 注册并接受 `rect`。产品必做的其它类型（`polygon`、`mask`、`keypoint`/`pose`、`obb`、`classification`）在架构上预留，启用前 MUST 拒绝写入。

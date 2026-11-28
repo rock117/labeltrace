@@ -7,6 +7,7 @@ import type {
   AssetLineage,
   Dataset,
   DatasetAsset,
+  DatasetClass,
   RectShape,
   Version,
   VersionManifest,
@@ -64,7 +65,7 @@ function AnnotateInner() {
   const [lineage, setLineage] = useState<AssetLineage | null>(null)
   const [shapes, setShapes] = useState<RectShape[]>([])
   const [imageUrl, setImageUrl] = useState<string | null>(null)
-  const [activeClass, setActiveClass] = useState(0)
+  const [activeClassId, setActiveClassId] = useState<string | null>(null)
   const [activeTool, setActiveTool] = useState<AnnotationToolType>('rect')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -151,12 +152,27 @@ function AnnotateInner() {
     [enabledTypes],
   )
 
-  const classNames = useMemo(() => {
+  const classes: DatasetClass[] = useMemo(() => {
     if (readOnly && version) {
-      return version.classes.length ? version.classes : ['class0']
+      return (version.classes || []).map((c, i) => ({
+        id: c.id,
+        name: c.name,
+        idx: i,
+        color: null,
+      }))
     }
-    return dataset?.classes.length ? dataset.classes : ['class0']
+    return dataset?.classes ?? []
   }, [readOnly, version, dataset])
+
+  useEffect(() => {
+    if (!classes.length) {
+      setActiveClassId(null)
+      return
+    }
+    setActiveClassId((prev) =>
+      prev && classes.some((c) => c.id === prev) ? prev : classes[0].id,
+    )
+  }, [classes])
 
   const titleName = readOnly
     ? version?.name ?? '版本'
@@ -672,7 +688,7 @@ function AnnotateInner() {
       if (readOnly) return
       if (e.key >= '1' && e.key <= '9') {
         const cls = Number(e.key) - 1
-        if (cls < classNames.length) setActiveClass(cls)
+        if (cls >= 0 && cls < classes.length) setActiveClassId(classes[cls].id)
       }
       if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault()
@@ -692,7 +708,7 @@ function AnnotateInner() {
     index,
     asset,
     readOnly,
-    classNames,
+    classes,
     markShapes,
     canGoPrevInFilter,
     canGoNextInFilter,
@@ -1005,8 +1021,8 @@ function AnnotateInner() {
               naturalWidth={nw}
               naturalHeight={nh}
               shapes={shapes}
-              classNames={classNames}
-              activeClass={activeClass}
+              classes={classes}
+              activeClassId={activeClassId}
               activeTool={activeTool}
               readOnly={readOnly}
               onChange={markShapes}
@@ -1018,30 +1034,36 @@ function AnnotateInner() {
 
         <aside className="lt-panel" style={{ padding: '0.85rem' }}>
           <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.9rem' }}>类别</h3>
-          <div style={{ display: 'grid', gap: 4 }}>
-            {classNames.map((name, i) => (
-              <button
-                key={i}
-                type="button"
-                className="lt-btn"
-                disabled={readOnly}
-                style={{
-                  justifyContent: 'flex-start',
-                  borderLeft: `3px solid ${classColorCss(i)}`,
-                  background:
-                    !readOnly && activeClass === i
-                      ? 'var(--lt-accent-soft)'
-                      : undefined,
-                }}
-                onClick={() => !readOnly && setActiveClass(i)}
-              >
-                <span className="mono" style={{ opacity: 0.7 }}>
-                  {i + 1}
-                </span>{' '}
-                {name}
-              </button>
-            ))}
-          </div>
+          {classes.length === 0 ? (
+            <p style={{ margin: 0, color: 'var(--lt-fg-subtle)', fontSize: 13 }}>
+              尚无类别，请先在数据集页维护类别后再标注。
+            </p>
+          ) : (
+            <div style={{ display: 'grid', gap: 4 }}>
+              {classes.map((c, i) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  className="lt-btn"
+                  disabled={readOnly}
+                  style={{
+                    justifyContent: 'flex-start',
+                    borderLeft: `3px solid ${classColorCss(c, i)}`,
+                    background:
+                      !readOnly && activeClassId === c.id
+                        ? 'var(--lt-accent-soft)'
+                        : undefined,
+                  }}
+                  onClick={() => !readOnly && setActiveClassId(c.id)}
+                >
+                  <span className="mono" style={{ opacity: 0.7 }}>
+                    {i + 1}
+                  </span>{' '}
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          )}
 
           <h3 style={{ margin: '1rem 0 0.5rem', fontSize: '0.9rem' }}>血缘</h3>
           {lineage?.mediaKind === 'frame' ? (
@@ -1067,22 +1089,26 @@ function AnnotateInner() {
             </p>
           ) : (
             <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: 13 }}>
-              {shapes.map((s, i) => (
-                <li key={i}>
-                  <span
-                    style={{
-                      display: 'inline-block',
-                      width: 8,
-                      height: 8,
-                      borderRadius: 2,
-                      background: `var(--lt-class-${s.cls % 5})`,
-                      marginRight: 6,
-                    }}
-                  />
-                  {classNames[s.cls] ?? `class${s.cls}`} · [
-                  {s.bbox.map((n) => Math.round(n)).join(', ')}]
-                </li>
-              ))}
+              {shapes.map((s, i) => {
+                const cls = classes.find((c) => c.id === s.classId)
+                const idx = classes.findIndex((c) => c.id === s.classId)
+                return (
+                  <li key={i}>
+                    <span
+                      style={{
+                        display: 'inline-block',
+                        width: 8,
+                        height: 8,
+                        borderRadius: 2,
+                        background: classColorCss(cls, idx >= 0 ? idx : i),
+                        marginRight: 6,
+                      }}
+                    />
+                    {cls?.name ?? s.classId.slice(0, 8)} · [
+                    {s.bbox.map((n) => Math.round(n)).join(', ')}]
+                  </li>
+                )
+              })}
             </ul>
           )}
           {!readOnly ? (

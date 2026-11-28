@@ -6,16 +6,27 @@
 
 ## ADDED Requirements
 
-### Requirement: 创建带类别名的数据集
-系统 SHALL 允许在项目内创建数据集，并带有有序类别名列表，供标注类别索引使用；并 SHALL 记录该数据集启用的标注类型集合（P0 默认仅检测框 `rect`）。
+### Requirement: 创建带类别的数据集
+系统 SHALL 允许在项目内创建数据集，并带有有序类别列表；每个类别 MUST 有稳定 `id`（UUID）与显示名 `name`。标注几何引用 `classId`，MUST NOT 仅依赖易变的数字下标。系统 SHALL 记录该数据集启用的标注类型集合（P0 默认仅检测框 `rect`）。YOLO 导出时的 `0..n-1` 仅由**当时有序列表**生成。
 
 #### Scenario: 创建数据集
 - **WHEN** 用户创建数据集 `缺陷检测`，类别为 `划痕`、`污渍`
-- **THEN** 数据集创建成功，工作区内类别索引与这些名称稳定对应，且启用标注类型默认包含 `rect`
+- **THEN** 数据集创建成功，每个类别有稳定 id，启用标注类型默认包含 `rect`
 
 #### Scenario: 读取启用的标注类型
 - **WHEN** 用户获取数据集详情
-- **THEN** 响应包含 `enabledAnnotationTypes`（或等价字段）
+- **THEN** 响应包含 `enabledAnnotationTypes`（或等价字段）与类别列表（含 id、name、顺序）
+
+### Requirement: 工作区维护类别
+系统 SHALL 允许有写权限的成员在工作区新增、改名、调序、删除类别。删除某类别时，若工作区标注仍引用其 `classId`，MUST 拒绝并说明；改名与调序 MUST NOT 改写已有标注中的 `classId`。已发版本快照中的类别不受工作区后续维护影响。
+
+#### Scenario: 改名不打乱已标
+- **WHEN** 用户将类别 `划痕` 改名为 `划痕-A`，且已有框引用该类别 id
+- **THEN** 框仍绑定同一 `classId`，仅显示名变化
+
+#### Scenario: 删除仍被引用的类别被拒
+- **WHEN** 用户删除某类别，但工作区至少有一个框的 `classId` 指向它
+- **THEN** 系统拒绝删除
 
 ### Requirement: 重命名数据集
 系统 SHALL 允许有写权限的成员更新数据集名称。重命名 MUST NOT 改写已发布版本快照内容。

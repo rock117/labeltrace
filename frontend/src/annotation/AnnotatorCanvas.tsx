@@ -10,17 +10,14 @@ import {
   Text,
 } from 'react-konva'
 import type Konva from 'konva'
-import type { RectShape } from '../lib/types'
+import type { DatasetClass, RectShape } from '../lib/types'
 import type { AnnotationToolType } from './toolRegistry'
 
-function resolveColor(cls: number): string {
+function resolveColor(cls: DatasetClass | undefined, fallbackIdx: number): string {
+  if (cls?.color) return cls.color
   const el = document.documentElement
-  const key = `--lt-class-${cls % 5}`
+  const key = `--lt-class-${fallbackIdx % 5}`
   return getComputedStyle(el).getPropertyValue(key).trim() || '#0f766e'
-}
-
-function classNameOf(classes: string[], cls: number): string {
-  return classes[cls] ?? `class${cls}`
 }
 
 type Props = {
@@ -28,8 +25,8 @@ type Props = {
   naturalWidth: number
   naturalHeight: number
   shapes: RectShape[]
-  classNames: string[]
-  activeClass: number
+  classes: DatasetClass[]
+  activeClassId: string | null
   /** P0 仅 rect；多工具时由工具栏切换 */
   activeTool: AnnotationToolType
   /** 版本快照浏览时为 true：不可绘制/拖拽 */
@@ -42,8 +39,8 @@ export function AnnotatorCanvas({
   naturalWidth,
   naturalHeight,
   shapes,
-  classNames,
-  activeClass,
+  classes,
+  activeClassId,
   activeTool,
   readOnly = false,
   onChange,
@@ -57,6 +54,8 @@ export function AnnotatorCanvas({
   const [selected, setSelected] = useState<number | null>(null)
   const trRef = useRef<Konva.Transformer>(null)
   const shapeRefs = useRef<(Konva.Rect | null)[]>([])
+
+  const byId = new Map(classes.map((c) => [c.id, c]))
 
   useEffect(() => {
     const image = new window.Image()
@@ -96,10 +95,9 @@ export function AnnotatorCanvas({
   const toImage = (sx: number, sy: number) => [sx / scale, sy / scale] as const
 
   const onMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
-    if (readOnly || activeTool !== 'rect') return
+    if (readOnly || activeTool !== 'rect' || !activeClassId) return
     const stage = e.target.getStage()
     if (!stage) return
-    // 图铺满 Stage 时点击落在 Image 上；点到框/标签/变换器时不新画
     const kind = e.target.getClassName()
     if (
       kind === 'Rect' ||
@@ -125,7 +123,7 @@ export function AnnotatorCanvas({
   }
 
   const onMouseUp = () => {
-    if (!drawing || !draft) {
+    if (!drawing || !draft || !activeClassId) {
       setDrawing(null)
       setDraft(null)
       return
@@ -138,7 +136,7 @@ export function AnnotatorCanvas({
     if (x2 - x1 < 4 || y2 - y1 < 4) return
     onChange([
       ...shapes,
-      { type: 'rect', cls: activeClass, bbox: [x1, y1, x2, y2] },
+      { type: 'rect', classId: activeClassId, bbox: [x1, y1, x2, y2] },
     ])
   }
 
@@ -160,59 +158,22 @@ export function AnnotatorCanvas({
     onChange(next)
   }
 
-  const fontSize = Math.max(11, Math.min(14, 12 * Math.sqrt(scale)))
+  const activeCls = activeClassId ? byId.get(activeClassId) : undefined
+  const activeIdx = classes.findIndex((c) => c.id === activeClassId)
 
   return (
-    <div
-      ref={containerRef}
-      style={{
-        background: 'var(--lt-bg-canvas)',
-        borderRadius: 'var(--lt-radius-lg)',
-        border: '1px solid var(--lt-border)',
-        overflow: 'hidden',
-        minHeight: 320,
-        position: 'relative',
-      }}
-    >
-      {shapes.length === 0 && !drawing ? (
-        <div
-          style={{
-            position: 'absolute',
-            left: 12,
-            top: 12,
-            zIndex: 2,
-            pointerEvents: 'none',
-            padding: '0.35rem 0.6rem',
-            borderRadius: 'var(--lt-radius)',
-            background:
-              'color-mix(in srgb, var(--lt-bg-elevated) 92%, transparent)',
-            border: '1px solid var(--lt-border)',
-            color: 'var(--lt-fg-muted)',
-            fontSize: 13,
-          }}
-        >
-          {readOnly
-            ? '只读快照：仅浏览，不可改标'
-            : activeTool === 'rect'
-              ? '在图上按住拖拽即可画检测框'
-              : `当前工具「${activeTool}」尚未实现绘制`}
-        </div>
-      ) : null}
+    <div ref={containerRef} style={{ width: '100%', minHeight: 320 }}>
       <Stage
         width={stageSize.w}
         height={stageSize.h}
         onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={onMouseUp}
+        onMousemove={onMouseMove}
+        onMouseup={onMouseUp}
         onMouseLeave={onMouseUp}
         style={{
-          margin: '0 auto',
-          display: 'block',
-          cursor: readOnly
-            ? 'default'
-            : activeTool === 'rect'
-              ? 'crosshair'
-              : 'default',
+          background: 'var(--lt-bg-muted)',
+          borderRadius: 8,
+          cursor: readOnly ? 'default' : 'crosshair',
         }}
       >
         <Layer>
@@ -220,19 +181,19 @@ export function AnnotatorCanvas({
             <KonvaImage image={img} width={stageSize.w} height={stageSize.h} />
           ) : null}
           {shapes.map((s, i) => {
+            const cls = byId.get(s.classId)
+            const idx = classes.findIndex((c) => c.id === s.classId)
+            const color = resolveColor(cls, idx >= 0 ? idx : i)
+            const label = cls?.name ?? s.classId.slice(0, 8)
             const [x1, y1, x2, y2] = s.bbox
-            const color = resolveColor(s.cls)
-            const label = classNameOf(classNames, s.cls)
-            const rx = x1 * scale
-            const ry = y1 * scale
             return (
               <Fragment key={i}>
                 <Rect
-                  ref={(n) => {
-                    shapeRefs.current[i] = n
+                  ref={(node) => {
+                    shapeRefs.current[i] = node
                   }}
-                  x={rx}
-                  y={ry}
+                  x={x1 * scale}
+                  y={y1 * scale}
                   width={(x2 - x1) * scale}
                   height={(y2 - y1) * scale}
                   stroke={color}
@@ -241,21 +202,17 @@ export function AnnotatorCanvas({
                   draggable={!readOnly}
                   onClick={() => !readOnly && setSelected(i)}
                   onTap={() => !readOnly && setSelected(i)}
-                  onDragEnd={(e) => {
-                    if (!readOnly) updateBox(i, e.target as Konva.Rect)
-                  }}
-                  onTransformEnd={(e) => {
-                    if (!readOnly) updateBox(i, e.target as Konva.Rect)
-                  }}
+                  onDragEnd={(e) => updateBox(i, e.target as Konva.Rect)}
+                  onTransformEnd={(e) => updateBox(i, e.target as Konva.Rect)}
                 />
-                <Label x={rx} y={ry} listening={false}>
-                  <Tag fill={color} cornerRadius={2} />
+                <Label x={x1 * scale} y={Math.max(0, y1 * scale - 18)}>
+                  <Tag fill={color} opacity={0.9} />
                   <Text
                     text={label}
-                    fontSize={fontSize}
-                    fontStyle="600"
-                    fill="#ffffff"
-                    padding={4}
+                    fontSize={11}
+                    fill="#fff"
+                    padding={3}
+                    fontFamily="ui-sans-serif, system-ui"
                   />
                 </Label>
               </Fragment>
@@ -267,24 +224,27 @@ export function AnnotatorCanvas({
               y={Math.min(draft[1], draft[3])}
               width={Math.abs(draft[2] - draft[0])}
               height={Math.abs(draft[3] - draft[1])}
-              stroke={resolveColor(activeClass)}
+              stroke={resolveColor(activeCls, activeIdx >= 0 ? activeIdx : 0)}
               dash={[4, 4]}
               strokeWidth={1.5}
             />
           ) : null}
-          <Transformer
-            ref={trRef}
-            rotateEnabled={false}
-            boundBoxFunc={(oldBox, newBox) =>
-              newBox.width < 8 || newBox.height < 8 ? oldBox : newBox
-            }
-          />
+          {!readOnly ? (
+            <Transformer
+              ref={trRef}
+              rotateEnabled={false}
+              boundBoxFunc={(oldBox, newBox) =>
+                newBox.width < 4 || newBox.height < 4 ? oldBox : newBox
+              }
+            />
+          ) : null}
         </Layer>
       </Stage>
     </div>
   )
 }
 
-export function classColorCss(cls: number): string {
-  return `var(--lt-class-${cls % 5})`
+export function classColorCss(cls: DatasetClass | undefined, idx: number): string {
+  if (cls?.color) return cls.color
+  return `var(--lt-class-${idx % 5})`
 }

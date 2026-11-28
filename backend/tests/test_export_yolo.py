@@ -79,7 +79,7 @@ def test_export_zip_matches_snapshot() -> None:
             files={"file": ("frame_000054.jpg", png2, "image/png")},
         ).json()["id"]
 
-        ds = client.post(
+        ds_body = client.post(
             f"/api/v1/projects/{pid}/datasets",
             json={
                 "name": "导出集",
@@ -87,7 +87,9 @@ def test_export_zip_matches_snapshot() -> None:
                 "enabled_annotation_types": ["rect"],
             },
             headers=_h("exp-owner"),
-        ).json()["id"]
+        ).json()
+        ds = ds_body["id"]
+        cid = ds_body["classes"][0]["id"]
         client.post(
             f"/api/v1/datasets/{ds}/assets",
             json={"asset_ids": [img1, img2]},
@@ -101,7 +103,11 @@ def test_export_zip_matches_snapshot() -> None:
                     "shapes": {
                         "format": "xyxy_abs",
                         "items": [
-                            {"type": "rect", "cls": 0, "bbox": [10, 10, 50, 50]}
+                            {
+                                "type": "rect",
+                                "classId": cid,
+                                "bbox": [10, 10, 50, 50],
+                            }
                         ],
                     },
                     "status": "submitted",

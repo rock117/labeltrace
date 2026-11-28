@@ -14,8 +14,13 @@ from app.core.errors import ForbiddenError, NotFoundError, ValidationAppError
 from app.core.logging import get_logger
 from app.models.annotation import Annotation
 from app.models.asset import Asset
-from app.models.dataset import Dataset, DatasetAsset, DatasetClass
+from app.models.dataset import Dataset, DatasetAsset
 from app.models.version import DatasetVersion
+from app.services.dataset_classes import (
+    class_id_set,
+    classes_for_version_snapshot,
+    list_classes,
+)
 from app.services.member_sources import build_member_sources
 
 logger = get_logger("labeltrace.versions")
@@ -85,17 +90,6 @@ def assign_random_splits(
         "ratios": {"train": train, "val": val, "test": test},
         "counts": counts,
     }
-
-
-def _classes(db: Session, dataset_id: UUID) -> list[str]:
-    return [
-        c.name
-        for c in db.scalars(
-            select(DatasetClass)
-            .where(DatasetClass.dataset_id == dataset_id)
-            .order_by(DatasetClass.idx)
-        ).all()
-    ]
 
 
 def _build_manifest(db: Session, dataset_id: UUID) -> dict[str, Any]:
@@ -168,7 +162,10 @@ def _diff_manifests(
 
 
 def _assert_ready_to_publish(db: Session, dataset_id: UUID) -> None:
-    """全部成员须有 status=submitted 的工作标注；空集不可发版。"""
+    """全部成员须有 status=submitted；须有类别；classId 合法。"""
+    if not list_classes(db, dataset_id):
+        raise ValidationAppError("数据集无类别，无法发版")
+
     members = list(
         db.scalars(
             select(DatasetAsset).where(DatasetAsset.dataset_id == dataset_id)
@@ -177,6 +174,7 @@ def _assert_ready_to_publish(db: Session, dataset_id: UUID) -> None:
     if not members:
         raise ValidationAppError("数据集无成员，无法发版")
 
+    allowed = class_id_set(db, dataset_id)
     anns = {
         a.asset_id: a
         for a in db.scalars(
@@ -184,13 +182,28 @@ def _assert_ready_to_publish(db: Session, dataset_id: UUID) -> None:
         ).all()
     }
     incomplete = 0
+    bad_cls = 0
     for m in members:
         ann = anns.get(m.asset_id)
         if ann is None or ann.status != "submitted":
             incomplete += 1
+            continue
+        items = (ann.shapes or {}).get("items") or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            cid = item.get("classId")
+            if cid and str(cid) not in allowed:
+                bad_cls += 1
     if incomplete:
         raise ValidationAppError(
             f"尚有 {incomplete} 个成员未提交标注，无法发版"
+        )
+    if bad_cls:
+        raise ValidationAppError(
+            f"有 {bad_cls} 个框的类别已不在工作区，请修正后再发版"
         )
 
 
@@ -250,7 +263,7 @@ def publish_version(
         dataset_id=dataset_id,
         name=name.strip(),
         parent_id=parent.id if parent else None,
-        classes=_classes(db, dataset_id),
+        classes=classes_for_version_snapshot(db, dataset_id),
         enabled_annotation_types=list(ds.enabled_annotation_types or ["rect"]),
         manifest=manifest,
         member_sources=member_sources,

@@ -78,11 +78,18 @@ export type FrameCandidate = {
   parent_video_id: string | null
 }
 
+export type DatasetClass = {
+  id: string
+  name: string
+  idx: number
+  color?: string | null
+}
+
 export type Dataset = {
   id: string
   project_id: string
   name: string
-  classes: string[]
+  classes: DatasetClass[]
   enabled_annotation_types: string[]
 }
 
@@ -107,11 +114,16 @@ export type MemberSource =
       frameCount: number
     }
   | { kind: 'upload'; imageCount: number }
-  | { kind: 'import'; importId: string | null; imageCount: number }
+  | {
+      kind: 'import'
+      importId: string | null
+      packageName?: string | null
+      imageCount: number
+    }
 
 export type RectShape = {
   type: 'rect'
-  cls: number
+  classId: string
   bbox: [number, number, number, number]
 }
 
@@ -129,12 +141,14 @@ export type Annotation = {
   updated_at: string | null
 }
 
+export type VersionClass = { id: string; name: string }
+
 export type Version = {
   id: string
   dataset_id: string
   name: string
   parent_id: string | null
-  classes: string[]
+  classes: VersionClass[]
   enabled_annotation_types: unknown[]
   member_sources: unknown[]
   change_summary: {
