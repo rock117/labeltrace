@@ -1,5 +1,6 @@
 import { Link, NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
 import { DialogHost } from '../components/DialogHost'
+import { ToastHost } from '../components/ToastHost'
 import { useAppStore } from '../store/appStore'
 import './shell.css'
 
@@ -100,6 +101,7 @@ export function AppShell() {
         </main>
       </div>
       <DialogHost />
+      <ToastHost />
     </div>
   )
 }

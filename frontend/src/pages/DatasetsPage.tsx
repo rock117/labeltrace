@@ -20,6 +20,7 @@ import { AuthVideoThumb } from '../components/AuthVideoThumb'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
 import { appConfirm, appPrompt } from '../store/dialogStore'
+import { appToast } from '../store/toastStore'
 import {
   getStoredDatasetId,
   setStoredDataset,
@@ -72,8 +73,6 @@ function DatasetsInner() {
   const [enabledTypes, setEnabledTypes] = useState<string[]>(['rect'])
   const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
   const [assignTo, setAssignTo] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
 
   const isOwner = projectMembers.some(
     (m) => m.user_id === me?.id && m.roles.includes('owner'),
@@ -107,7 +106,7 @@ function DatasetsInner() {
         setActive(null)
         setMembers([])
         setSources([])
-        setError('该数据集不属于当前项目，已清空选择')
+        appToast.error('该数据集不属于当前项目，已清空选择')
         return []
       }
       setActiveId(id)
@@ -130,7 +129,6 @@ function DatasetsInner() {
     if (!active) return
     const prev = enabledIds
     setEnabledIds(classIds)
-    setError(null)
     await run('classes', async () => {
       try {
         const ds = await api<Dataset>(`/v1/datasets/${active.id}/classes`, {
@@ -142,7 +140,7 @@ function DatasetsInner() {
         setDatasets((prevDs) => prevDs.map((d) => (d.id === ds.id ? ds : d)))
       } catch (e) {
         setEnabledIds(prev)
-        setError(formatError(e))
+        appToast.error(formatError(e))
       }
     })
   }
@@ -150,12 +148,11 @@ function DatasetsInner() {
   const saveEnabledTypes = async (types: string[]) => {
     if (!active) return
     if (types.length === 0) {
-      setError('至少启用一种标注类型')
+      appToast.error('至少启用一种标注类型')
       return
     }
     const prev = enabledTypes
     setEnabledTypes(types)
-    setError(null)
     await run('ann-types', async () => {
       try {
         const ds = await api<Dataset>(
@@ -174,14 +171,13 @@ function DatasetsInner() {
         setDatasets((prevDs) => prevDs.map((d) => (d.id === ds.id ? ds : d)))
       } catch (e) {
         setEnabledTypes(prev)
-        setError(formatError(e))
+        appToast.error(formatError(e))
       }
     })
   }
 
   const reload = useCallback(async () => {
     setLoading(true)
-    setError(null)
     try {
       const [list, folderList, vocabulary, roster] = await Promise.all([
         api<Dataset[]>(`/v1/projects/${projectId}/datasets`),
@@ -214,7 +210,7 @@ function DatasetsInner() {
         setPickedMembers(new Set())
       }
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
     } finally {
       setLoading(false)
     }
@@ -227,7 +223,6 @@ function DatasetsInner() {
 
   const create = async () => {
     if (!name.trim()) return
-    setError(null)
     await run('create', async () => {
     try {
       const ds = await api<Dataset>(`/v1/projects/${projectId}/datasets`, {
@@ -240,9 +235,9 @@ function DatasetsInner() {
       setName('')
       setDatasets((prev) => [ds, ...prev])
       await selectDataset(ds.id)
-      setMessage(`已创建数据集 ${ds.name}`)
+      appToast.success(`已创建数据集 ${ds.name}`)
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
     }
     })
   }
@@ -251,8 +246,7 @@ function DatasetsInner() {
     const dsName = importName.trim() || file.name.replace(/\.zip$/i, '') || 'imported'
     const profile = importProfile
     const profileName = importProfileLabel[profile]
-    setError(null)
-    setMessage(`正在导入 ${file.name}（${profileName}）…`)
+    appToast.info(`正在导入 ${file.name}（${profileName}）…`, { id: 'import', duration: 0 })
     await run('import', async () => {
     try {
       const fd = new FormData()
@@ -273,7 +267,7 @@ function DatasetsInner() {
       for (let i = 0; i < 120; i++) {
         row = await api<typeof imp>(`/v1/dataset-imports/${imp.id}`)
         if (row.status === 'succeeded' || row.status === 'failed') break
-        setMessage(`导入进行中（${profileName}）… ${row.status}`)
+        appToast.info(`导入进行中（${profileName}）… ${row.status}`, { id: 'import', duration: 0 })
         await new Promise((r) => setTimeout(r, 500))
       }
       if (row.status !== 'succeeded') {
@@ -284,15 +278,15 @@ function DatasetsInner() {
       setImportName('')
       await reload()
       if (row.dataset_id) await selectDataset(row.dataset_id)
-      setMessage(
+      appToast.success(
         `导入完成（${profileName}）` +
           `${n != null ? `：${n} 张` : ''}` +
           (reused ? `（复用 ${reused}）` : '') +
           ` · 数据集 ${dsName}`,
+        { id: 'import' },
       )
     } catch (e) {
-      setError(formatError(e))
-      setMessage(null)
+      appToast.error(formatError(e), { id: 'import' })
     }
     })
   }
@@ -308,7 +302,6 @@ function DatasetsInner() {
 
   const addFromExtractJobs = async () => {
     if (!active || pickedJobs.size === 0) return
-    setError(null)
     await run('add-extract', async () => {
     try {
       const before = members.length
@@ -327,13 +320,13 @@ function DatasetsInner() {
       }
       const mem = await selectDataset(active.id)
       const delta = Math.max(0, mem.length - before)
-      setMessage(
+      appToast.success(
         delta > 0
           ? `已从 ${jobIds.length} 个抽帧任务新加入 ${delta} 张帧`
           : `所选 ${jobIds.length} 个任务无新帧可加（可能已全部在集中或已删光）`,
       )
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
     }
     })
   }
@@ -357,7 +350,7 @@ function DatasetsInner() {
       return
     }
     void loadLibraryImages(libraryFolderId).catch((e) =>
-      setError(formatError(e)),
+      appToast.error(formatError(e)),
     )
   }, [libraryFolderId, loadLibraryImages])
 
@@ -381,7 +374,6 @@ function DatasetsInner() {
     if (next == null) return
     const name = next.trim()
     if (!name || name === active.name) return
-    setError(null)
     await run('rename', async () => {
     try {
       const ds = await api<Dataset>(`/v1/datasets/${active.id}`, {
@@ -390,9 +382,9 @@ function DatasetsInner() {
       })
       setDatasets((prev) => prev.map((d) => (d.id === ds.id ? ds : d)))
       setActive(ds)
-      setMessage(`已重命名为 ${ds.name}`)
+      appToast.success(`已重命名为 ${ds.name}`)
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
     }
     })
   }
@@ -424,7 +416,6 @@ function DatasetsInner() {
       danger: true,
     })
     if (!ok) return
-    setError(null)
     await run('remove-members', async () => {
     try {
       for (const assetId of pickedMembers) {
@@ -433,9 +424,9 @@ function DatasetsInner() {
         })
       }
       await selectDataset(active.id)
-      setMessage(`已移出 ${n} 张`)
+      appToast.success(`已移出 ${n} 张`)
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
     }
     })
   }
@@ -443,7 +434,6 @@ function DatasetsInner() {
   const assignSelectedMembers = async (assigneeUserId: string | null) => {
     if (!active || pickedMembers.size === 0 || !isOwner) return
     const n = pickedMembers.size
-    setError(null)
     await run('assign-members', async () => {
       try {
         const updated = await api<DatasetAsset[]>(
@@ -474,9 +464,9 @@ function DatasetsInner() {
             ? '未分配'
             : writableMembers.find((w) => w.user_id === assigneeUserId)
                 ?.username ?? '指定用户'
-        setMessage(`已将 ${n} 张分配给「${label}」`)
+        appToast.success(`已将 ${n} 张分配给「${label}」`)
       } catch (e) {
-        setError(formatError(e))
+        appToast.error(formatError(e))
       }
     })
   }
@@ -484,10 +474,9 @@ function DatasetsInner() {
   const addFromLibrary = async () => {
     if (!active) return
     if (picked.size === 0) {
-      setError('请先勾选素材库中的图片')
+      appToast.error('请先勾选素材库中的图片')
       return
     }
-    setError(null)
     await run('add-library', async () => {
     try {
       const added = await api<DatasetAsset[]>(`/v1/datasets/${active.id}/assets`, {
@@ -499,9 +488,9 @@ function DatasetsInner() {
       })
       setPicked(new Set())
       await selectDataset(active.id)
-      setMessage(`已从素材库加入 ${added.length} 张`)
+      appToast.success(`已从素材库加入 ${added.length} 张`)
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
     }
     })
   }
@@ -519,13 +508,6 @@ function DatasetsInner() {
           </p>
         </div>
       </div>
-
-      {error ? (
-        <StateBlock tone="error" title="出错了" description={error} />
-      ) : null}
-      {message ? (
-        <p style={{ color: 'var(--lt-fg-muted)', marginTop: 0 }}>{message}</p>
-      ) : null}
 
       <div className="lt-panel" style={{ padding: '1rem', marginBottom: '1rem' }}>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>

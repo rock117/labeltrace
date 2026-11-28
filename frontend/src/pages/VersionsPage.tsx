@@ -8,6 +8,7 @@ import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
 import { useAppStore } from '../store/appStore'
 import { appConfirm } from '../store/dialogStore'
+import { appToast } from '../store/toastStore'
 import {
   getStoredDatasetId,
   setStoredDataset,
@@ -43,8 +44,6 @@ function VersionsInner() {
   const [exportProfile, setExportProfile] = useState<
     'detect' | 'segment' | 'obb' | 'pose' | 'classify'
   >('detect')
-  const [error, setError] = useState<string | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
 
   const exportProfileLabel: Record<typeof exportProfile, string> = {
     detect: '检测框',
@@ -59,8 +58,6 @@ function VersionsInner() {
       if (!id || id === datasetId) return
       setName('')
       setNote('')
-      setError(null)
-      setMessage(null)
       setDataset(null)
       setVersions([])
       setLoading(true)
@@ -123,8 +120,10 @@ function VersionsInner() {
     const profile = exportProfile
     const profileName = exportProfileLabel[profile]
     setExportingId(versionId)
-    setError(null)
-    setMessage(`正在导出 ${versionName}（${profileName}）…`)
+    appToast.info(`正在导出 ${versionName}（${profileName}）…`, {
+      id: 'export',
+      duration: 0,
+    })
     try {
       const enq = await api<{ job_id: string; status: string }>(
         `/v1/versions/${versionId}/export`,
@@ -137,9 +136,10 @@ function VersionsInner() {
       for (let i = 0; i < 120; i++) {
         job = await api<JobStatus>(`/v1/jobs/${enq.job_id}`)
         if (job.status === 'succeeded' || job.status === 'failed') break
-        setMessage(
+        appToast.info(
           `正在导出 ${versionName}（${profileName}）… ${job.status}` +
             (job.progress != null ? ` ${Math.round(job.progress * 100)}%` : ''),
+          { id: 'export', duration: 0 },
         )
         await new Promise((r) => setTimeout(r, 500))
       }
@@ -147,16 +147,13 @@ function VersionsInner() {
         throw new Error(job?.error_message || '导出失败或超时')
       }
       const n = (job.result?.imageCount as number | undefined) ?? null
-      setMessage(
-        `导出完成${n != null ? `（${n} 张）` : ''}，开始下载…`,
-      )
       await downloadExportZip(versionId, profile)
-      setMessage(
+      appToast.success(
         `已下载 YOLO ${profileName} 包${n != null ? `（${n} 张）` : ''} · ${versionName}`,
+        { id: 'export' },
       )
     } catch (e) {
-      setError(formatError(e))
-      setMessage(null)
+      appToast.error(formatError(e), { id: 'export' })
     } finally {
       setExportingId(null)
     }
@@ -174,8 +171,6 @@ function VersionsInner() {
       confirmLabel: '应用',
     })
     if (!ok) return
-    setError(null)
-    setMessage(null)
     await run(`apply:${versionId}`, async () => {
     try {
       const r = await api<{
@@ -184,7 +179,7 @@ function VersionsInner() {
         skipped: number
         dataset_id: string
       }>(`/v1/versions/${versionId}/apply-to-workspace`, { method: 'POST' })
-      setMessage(
+      appToast.success(
         `已应用到工作区：新增 ${r.added} · 覆盖 ${r.overwritten}` +
           (r.skipped ? ` · 跳过 ${r.skipped}` : ''),
       )
@@ -193,14 +188,13 @@ function VersionsInner() {
         { projectId },
       )
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
     }
     })
   }
 
   const reload = useCallback(async (id: string) => {
     setLoading(true)
-    setError(null)
     try {
       const [ds, vers] = await Promise.all([
         api<Dataset>(`/v1/datasets/${id}`),
@@ -211,7 +205,7 @@ function VersionsInner() {
         setDataset(null)
         setVersions([])
         setParams({}, { replace: true })
-        setError('该数据集不属于当前项目，请重新选择')
+        appToast.error('该数据集不属于当前项目，请重新选择')
         return
       }
       setDataset(ds)
@@ -224,7 +218,7 @@ function VersionsInner() {
         return [ds, ...prev]
       })
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
       setDataset(null)
       setVersions([])
     } finally {
@@ -254,7 +248,7 @@ function VersionsInner() {
           )
         }
       } catch (e) {
-        if (!cancelled) setError(formatError(e))
+        if (!cancelled) appToast.error(formatError(e))
       } finally {
         if (!cancelled) setListLoading(false)
       }
@@ -277,8 +271,6 @@ function VersionsInner() {
 
   const publish = async () => {
     if (!datasetId || !name.trim() || !splitOk) return
-    setError(null)
-    setMessage(null)
     await run('publish', async () => {
     try {
       const parent = versions[0]?.id ?? null
@@ -296,12 +288,12 @@ function VersionsInner() {
       })
       setName('')
       setNote('')
-      setMessage(
+      appToast.success(
         `已发版 ${ver.name}（${ver.entry_count} 条）· 按 ${splitTrain}/${splitVal}/${splitTest} 随机划分`,
       )
       await reload(datasetId)
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
     }
     })
   }
@@ -420,12 +412,6 @@ function VersionsInner() {
         </Link>
       </div>
 
-      {error ? (
-        <StateBlock tone="error" title="出错了" description={error} />
-      ) : null}
-      {message ? (
-        <p style={{ color: 'var(--lt-success)', marginTop: 0 }}>{message}</p>
-      ) : null}
 
       <div className="lt-panel" style={{ padding: '1rem', marginBottom: '1rem' }}>
         <h2 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem' }}>发版</h2>

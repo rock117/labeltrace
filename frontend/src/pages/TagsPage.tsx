@@ -4,6 +4,7 @@ import { api } from '../lib/api'
 import type { Tag, TaggedAsset } from '../lib/types'
 import { useAppStore } from '../store/appStore'
 import { formatError } from '../hooks/useAsync'
+import { appToast } from '../store/toastStore'
 import { useActionPending } from '../hooks/useActionPending'
 import { AuthImage } from '../components/AuthImage'
 import { AuthVideoThumb } from '../components/AuthVideoThumb'
@@ -19,13 +20,11 @@ function TagsInner() {
   const [loading, setLoading] = useState(true)
   const [assetsLoading, setAssetsLoading] = useState(false)
   const { is, run } = useActionPending()
-  const [error, setError] = useState<string | null>(null)
 
   const active = tags.find((t) => t.id === activeId) ?? null
 
   const reloadTags = useCallback(async () => {
     setLoading(true)
-    setError(null)
     try {
       const list = await api<Tag[]>(`/v1/projects/${projectId}/tags`)
       setTags(list)
@@ -33,7 +32,7 @@ function TagsInner() {
         prev && list.some((t) => t.id === prev) ? prev : list[0]?.id ?? null,
       )
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
       setTags([])
       setActiveId(null)
     } finally {
@@ -44,14 +43,13 @@ function TagsInner() {
   const loadAssets = useCallback(
     async (tagId: string) => {
       setAssetsLoading(true)
-      setError(null)
       try {
         const list = await api<TaggedAsset[]>(
           `/v1/projects/${projectId}/assets?tag_ids=${encodeURIComponent(tagId)}`,
         )
         setAssets(list)
       } catch (e) {
-        setError(formatError(e))
+        appToast.error(formatError(e))
         setAssets([])
       } finally {
         setAssetsLoading(false)
@@ -72,7 +70,6 @@ function TagsInner() {
   const create = async () => {
     const next = name.trim()
     if (!next) return
-    setError(null)
     await run('create', async () => {
       try {
         const tag = await api<Tag>(`/v1/projects/${projectId}/tags`, {
@@ -83,7 +80,7 @@ function TagsInner() {
         setTags((prev) => [...prev, tag].sort((a, b) => a.name.localeCompare(b.name)))
         setActiveId(tag.id)
       } catch (e) {
-        setError(formatError(e))
+        appToast.error(formatError(e))
       }
     })
   }
@@ -101,7 +98,6 @@ function TagsInner() {
         </div>
       </div>
 
-      {error ? <StateBlock tone="error" title="出错了" description={error} /> : null}
 
       <div className="lt-panel" style={{ padding: '1rem', marginBottom: '1rem' }}>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>

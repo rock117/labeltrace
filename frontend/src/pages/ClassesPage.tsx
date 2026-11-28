@@ -5,9 +5,10 @@ import type { ProjectClass } from '../lib/types'
 import { useAppStore } from '../store/appStore'
 import { formatError } from '../hooks/useAsync'
 import { useActionPending } from '../hooks/useActionPending'
-import { LoadingBlock, StateBlock } from '../components/StateBlock'
+import { LoadingBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
 import { appConfirm, appPrompt } from '../store/dialogStore'
+import { appToast } from '../store/toastStore'
 
 type ProjectRole = 'owner' | 'annotator' | 'viewer'
 
@@ -25,11 +26,9 @@ function ClassesInner() {
   const [classColor, setClassColor] = useState('#0f766e')
   const [loading, setLoading] = useState(true)
   const { is, run } = useActionPending()
-  const [error, setError] = useState<string | null>(null)
 
   const reload = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true)
-    setError(null)
     try {
       const [list, members] = await Promise.all([
         api<ProjectClass[]>(`/v1/projects/${projectId}/classes`),
@@ -40,7 +39,7 @@ function ClassesInner() {
       const roles = (mine?.roles ?? []) as string[]
       setCanWrite(roles.some((r) => r === 'owner' || r === 'annotator'))
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
       setClasses([])
     } finally {
       setLoading(false)
@@ -54,7 +53,6 @@ function ClassesInner() {
   const addClass = async () => {
     const next = className.trim()
     if (!next) return
-    setError(null)
     await run('add', async () => {
       try {
         await api<ProjectClass>(`/v1/projects/${projectId}/classes`, {
@@ -64,7 +62,7 @@ function ClassesInner() {
         setClassName('')
         await reload(true)
       } catch (e) {
-        setError(formatError(e))
+        appToast.error(formatError(e))
       }
     })
   }
@@ -79,7 +77,6 @@ function ClassesInner() {
     if (next == null) return
     const name = next.trim()
     if (!name || name === cls.name) return
-    setError(null)
     await run(`rename:${cls.id}`, async () => {
       try {
         await api(`/v1/projects/${projectId}/classes/${cls.id}`, {
@@ -88,7 +85,7 @@ function ClassesInner() {
         })
         await reload(true)
       } catch (e) {
-        setError(formatError(e))
+        appToast.error(formatError(e))
       }
     })
   }
@@ -101,13 +98,12 @@ function ClassesInner() {
       danger: true,
     })
     if (!ok) return
-    setError(null)
     await run(`delete:${cls.id}`, async () => {
       try {
         await api(`/v1/projects/${projectId}/classes/${cls.id}`, { method: 'DELETE' })
         await reload(true)
       } catch (e) {
-        setError(formatError(e))
+        appToast.error(formatError(e))
       }
     })
   }
@@ -125,7 +121,6 @@ function ClassesInner() {
         </div>
       </div>
 
-      {error ? <StateBlock tone="error" title="出错了" description={error} /> : null}
 
       <div className="lt-panel" style={{ padding: '1rem' }}>
         {canWrite ? (

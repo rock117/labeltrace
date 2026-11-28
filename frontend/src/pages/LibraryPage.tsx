@@ -19,6 +19,7 @@ import { AuthVideoThumb } from '../components/AuthVideoThumb'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
 import { appConfirm, appPrompt } from '../store/dialogStore'
+import { appToast } from '../store/toastStore'
 import {
   getStoredBrowseKind,
   getStoredExtractJobId,
@@ -77,8 +78,6 @@ function LibraryInner() {
     asset: Asset
     picked: Set<string>
   } | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
 
   const currentParentId = folder?.id ?? null
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
@@ -147,7 +146,7 @@ function LibraryInner() {
   const selectVideo = useCallback(
     async (video: Asset) => {
       if (video.project_id && video.project_id !== projectId) {
-        setError('该素材不属于当前项目')
+        appToast.error('该素材不属于当前项目')
         return
       }
       setSelectedVideo(video)
@@ -185,7 +184,7 @@ function LibraryInner() {
           setVideoJobs(jobs)
         }
       } catch (e) {
-        setError(formatError(e))
+        appToast.error(formatError(e))
       }
     },
     [loadVideoJobs, openExtractJob, projectId],
@@ -199,7 +198,7 @@ function LibraryInner() {
     ) => {
       if (next && next.project_id !== projectId) {
         setStoredFolder(null, { projectId })
-        setError('该目录不属于当前项目')
+        appToast.error('该目录不属于当前项目')
         return
       }
       setFolder(next)
@@ -252,7 +251,6 @@ function LibraryInner() {
     let cancelled = false
     ;(async () => {
       setLoading(true)
-      setError(null)
       try {
         const roots = await loadChildren(null)
         if (cancelled) return
@@ -293,7 +291,7 @@ function LibraryInner() {
           }
         }
       } catch (e) {
-        if (!cancelled) setError(formatError(e))
+        if (!cancelled) appToast.error(formatError(e))
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -318,7 +316,7 @@ function LibraryInner() {
       try {
         await loadAssetsPage(folder.id, kind, 0)
       } catch (e) {
-        setError(formatError(e))
+        appToast.error(formatError(e))
       }
     })
   }
@@ -329,7 +327,7 @@ function LibraryInner() {
       try {
         await loadAssetsPage(folder.id, browseKind, nextPage)
       } catch (e) {
-        setError(formatError(e))
+        appToast.error(formatError(e))
       }
     })
   }
@@ -337,7 +335,6 @@ function LibraryInner() {
   const createFolder = async () => {
     const name = newFolderName.trim()
     if (!name) return
-    setError(null)
     await run('create-folder', async () => {
     try {
       const created = await api<Folder>(`/v1/projects/${projectId}/folders`, {
@@ -348,10 +345,10 @@ function LibraryInner() {
         }),
       })
       setNewFolderName('')
-      setMessage(`已创建目录：${created.path}`)
+      appToast.success(`已创建目录：${created.path}`)
       await enterFolder(created, [...trail, created])
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
     }
     })
   }
@@ -366,14 +363,13 @@ function LibraryInner() {
     if (next == null) return
     const name = next.trim()
     if (!name || name === target.name) return
-    setError(null)
     await run('rename-folder', async () => {
     try {
       const updated = await api<Folder>(`/v1/folders/${target.id}`, {
         method: 'PATCH',
         body: JSON.stringify({ name }),
       })
-      setMessage(`已重命名目录：${updated.path}`)
+      appToast.success(`已重命名目录：${updated.path}`)
       if (folder?.id === updated.id) {
         const nextTrail = [...trail]
         const i = nextTrail.findIndex((f) => f.id === updated.id)
@@ -385,7 +381,7 @@ function LibraryInner() {
         setChildFolders(await loadChildren(null))
       }
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
     }
     })
   }
@@ -400,7 +396,6 @@ function LibraryInner() {
     if (next == null) return
     const filename = next.trim()
     if (!filename || filename === asset.filename) return
-    setError(null)
     await run(`rename-asset:${asset.id}`, async () => {
     try {
       const updated = await api<Asset>(`/v1/assets/${asset.id}`, {
@@ -410,15 +405,14 @@ function LibraryInner() {
       if (folder) await loadAssetsPage(folder.id, browseKind, page)
       if (selectedVideo?.id === updated.id) setSelectedVideo(updated)
       if (selectedImage?.id === updated.id) setSelectedImage(updated)
-      setMessage(`已重命名：${updated.filename}`)
+      appToast.success(`已重命名：${updated.filename}`)
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
     }
     })
   }
 
   const openTagEditor = async (asset: Asset) => {
-    setError(null)
     try {
       const [tagList, current] = await Promise.all([
         projectTags.length
@@ -432,14 +426,13 @@ function LibraryInner() {
         picked: new Set(current.map((t) => t.id)),
       })
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
     }
   }
 
   const saveAssetTags = async () => {
     if (!tagEditor) return
     const { asset, picked } = tagEditor
-    setError(null)
     await run(`tags:${asset.id}`, async () => {
       try {
         await api(`/v1/assets/${asset.id}/tags`, {
@@ -447,9 +440,9 @@ function LibraryInner() {
           body: JSON.stringify({ tag_ids: [...picked] }),
         })
         setTagEditor(null)
-        setMessage(`已更新「${asset.filename}」的标签`)
+        appToast.success(`已更新「${asset.filename}」的标签`)
       } catch (e) {
-        setError(formatError(e))
+        appToast.error(formatError(e))
       }
     })
   }
@@ -462,7 +455,6 @@ function LibraryInner() {
       danger: true,
     })
     if (!ok) return
-    setError(null)
     await run(`delete-asset:${asset.id}`, async () => {
     try {
       await api(`/v1/assets/${asset.id}`, { method: 'DELETE' })
@@ -475,9 +467,9 @@ function LibraryInner() {
       }
       if (selectedImage?.id === asset.id) setSelectedImage(null)
       if (folder) await loadAssetsPage(folder.id, browseKind, page)
-      setMessage(`已删除：${asset.filename}`)
+      appToast.success(`已删除：${asset.filename}`)
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
     }
     })
   }
@@ -503,13 +495,11 @@ function LibraryInner() {
 
   const upload = async (files: FileList | File[]) => {
     if (!folder) {
-      setError('请先创建或选择一个目录，再上传')
+      appToast.error('请先创建或选择一个目录，再上传')
       return
     }
     const list = Array.from(files)
     if (list.length === 0) return
-    setError(null)
-    setMessage(null)
     setUploadProgress({ index: 0, total: list.length, name: list[0].name })
     await run('upload', async () => {
     try {
@@ -554,9 +544,9 @@ function LibraryInner() {
       const parts: string[] = []
       if (nImg) parts.push(`${nImg} 张图片`)
       if (nVid) parts.push(`${nVid} 个视频`)
-      setMessage(`已上传 ${parts.join('、')}`)
+      appToast.success(`已上传 ${parts.join('、')}`)
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
     } finally {
       setUploadProgress(null)
     }
@@ -565,8 +555,7 @@ function LibraryInner() {
 
   const startExtract = async () => {
     if (!selectedVideo) return
-    setError(null)
-    setMessage('抽帧任务已提交…')
+    appToast.info('抽帧任务已提交…', { id: 'extract', duration: 0 })
     setFrames([])
     setSelected(new Set())
     await run('extract', async () => {
@@ -590,8 +579,7 @@ function LibraryInner() {
       await pollExtract(job.id)
       await loadVideoJobs(selectedVideo.id)
     } catch (e) {
-      setError(formatError(e))
-      setMessage(null)
+      appToast.error(formatError(e), { id: 'extract' })
     }
     })
   }
@@ -614,18 +602,20 @@ function LibraryInner() {
             cur && cur.id === videoId ? { ...cur, extracted: true } : cur,
           )
         }
-        setMessage(`抽帧完成，共 ${fr.length} 帧（按时间升序；不进入目录列表）`)
+        appToast.success(
+          `抽帧完成，共 ${fr.length} 帧（按时间升序；不进入目录列表）`,
+          { id: 'extract' },
+        )
         return
       }
       if (job.status === 'failed') {
-        setError(job.error_message || '抽帧失败')
-        setMessage(null)
+        appToast.error(job.error_message || '抽帧失败', { id: 'extract' })
         return
       }
-      setMessage(`抽帧进行中… ${job.status}`)
+      appToast.info(`抽帧进行中… ${job.status}`, { id: 'extract', duration: 0 })
       await new Promise((r) => setTimeout(r, 800))
     }
-    setError('抽帧超时，请稍后刷新查看')
+    appToast.error('抽帧超时，请稍后刷新查看', { id: 'extract' })
   }
 
   const toggle = (id: string) => {
@@ -639,7 +629,6 @@ function LibraryInner() {
 
   const discardSelected = async () => {
     if (!extractJob || selected.size === 0) return
-    setError(null)
     await run('discard', async () => {
     try {
       const result = await api<{ discarded_count?: number; deleted?: number }>(
@@ -655,16 +644,15 @@ function LibraryInner() {
       setFrames(fr)
       setSelected(new Set())
       const n = result.discarded_count ?? result.deleted ?? selected.size
-      setMessage(`已删除 ${n} 帧，剩余 ${fr.length}`)
+      appToast.success(`已删除 ${n} 帧，剩余 ${fr.length}`)
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
     }
     })
   }
 
   const addCurrentJobToDataset = async () => {
     if (!extractJob || !targetDatasetId || frames.length === 0) return
-    setError(null)
     await run('add-frames', async () => {
     try {
       const added = await api<{ asset_id: string }[]>(
@@ -679,9 +667,9 @@ function LibraryInner() {
       )
       const dsName =
         datasets.find((d) => d.id === targetDatasetId)?.name || '数据集'
-      setMessage(`已将当前任务 ${added.length} 帧加入「${dsName}」`)
+      appToast.success(`已将当前任务 ${added.length} 帧加入「${dsName}」`)
     } catch (e) {
-      setError(formatError(e))
+      appToast.error(formatError(e))
     }
     })
   }
@@ -729,16 +717,11 @@ function LibraryInner() {
         </label>
       </div>
 
-      {error ? (
-        <StateBlock tone="error" title="出错了" description={error} />
-      ) : null}
       {uploadProgress ? (
         <p style={{ color: 'var(--lt-fg-muted)', marginTop: 0 }}>
           正在上传 {uploadProgress.index}/{uploadProgress.total} ·{' '}
           {uploadProgress.name}
         </p>
-      ) : message ? (
-        <p style={{ color: 'var(--lt-fg-muted)', marginTop: 0 }}>{message}</p>
       ) : null}
 
       <div
