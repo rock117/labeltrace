@@ -58,6 +58,15 @@ function DatasetsInner() {
   const [loading, setLoading] = useState(true)
   const { is, run } = useActionPending()
   const [importName, setImportName] = useState('')
+  const [importProfile, setImportProfile] = useState<
+    'detect' | 'segment' | 'obb' | 'pose'
+  >('detect')
+  const importProfileLabel: Record<typeof importProfile, string> = {
+    detect: '检测框',
+    segment: '多边形分割',
+    obb: '旋转框',
+    pose: '关键点',
+  }
   const [projectClasses, setProjectClasses] = useState<ProjectClass[]>([])
   const [enabledIds, setEnabledIds] = useState<string[]>([])
   const [enabledTypes, setEnabledTypes] = useState<string[]>(['rect'])
@@ -240,13 +249,16 @@ function DatasetsInner() {
 
   const importYoloZip = async (file: File) => {
     const dsName = importName.trim() || file.name.replace(/\.zip$/i, '') || 'imported'
+    const profile = importProfile
+    const profileName = importProfileLabel[profile]
     setError(null)
-    setMessage(`正在导入 ${file.name}…`)
+    setMessage(`正在导入 ${file.name}（${profileName}）…`)
     await run('import', async () => {
     try {
       const fd = new FormData()
       fd.append('file', file)
       fd.append('datasetName', dsName)
+      fd.append('profile', profile)
       const imp = await api<{
         id: string
         dataset_id: string | null
@@ -261,7 +273,7 @@ function DatasetsInner() {
       for (let i = 0; i < 120; i++) {
         row = await api<typeof imp>(`/v1/dataset-imports/${imp.id}`)
         if (row.status === 'succeeded' || row.status === 'failed') break
-        setMessage(`导入进行中… ${row.status}`)
+        setMessage(`导入进行中（${profileName}）… ${row.status}`)
         await new Promise((r) => setTimeout(r, 500))
       }
       if (row.status !== 'succeeded') {
@@ -273,7 +285,8 @@ function DatasetsInner() {
       await reload()
       if (row.dataset_id) await selectDataset(row.dataset_id)
       setMessage(
-        `导入完成${n != null ? `：${n} 张` : ''}` +
+        `导入完成（${profileName}）` +
+          `${n != null ? `：${n} 张` : ''}` +
           (reused ? `（复用 ${reused}）` : '') +
           ` · 数据集 ${dsName}`,
       )
@@ -546,6 +559,26 @@ function DatasetsInner() {
           <span style={{ fontSize: 13, color: 'var(--lt-fg-muted)' }}>
             导入 YOLO zip
           </span>
+          <label style={{ fontSize: 13, color: 'var(--lt-fg-muted)' }}>
+            剖面
+            <select
+              className="lt-input"
+              value={importProfile}
+              disabled={is('import')}
+              aria-label="导入剖面"
+              onChange={(e) =>
+                setImportProfile(
+                  e.target.value as 'detect' | 'segment' | 'obb' | 'pose',
+                )
+              }
+              style={{ marginLeft: 6, maxWidth: 140 }}
+            >
+              <option value="detect">检测框</option>
+              <option value="segment">多边形分割</option>
+              <option value="obb">旋转框</option>
+              <option value="pose">关键点</option>
+            </select>
+          </label>
           <input
             className="lt-input"
             placeholder="新建数据集名（可空，默认用文件名）"
@@ -568,7 +601,7 @@ function DatasetsInner() {
             />
           </label>
           <span style={{ fontSize: 12, color: 'var(--lt-fg-subtle)' }}>
-            需含 data.yaml + train|val|test/images|labels；仅负责人；导入图不进素材库目录
+            需含 data.yaml + train|val|test/images|labels；与导出同剖面；仅负责人；导入图不进素材库目录
           </span>
         </div>
       </div>

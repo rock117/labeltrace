@@ -47,13 +47,13 @@
 | 优先级 | 类型 | `shapes[].type` | 说明 |
 |--------|------|-----------------|------|
 | **已交付** | 检测框 | `rect` | YOLO detect；导入/导出 detect 包 |
-| **已交付** | 分割多边形 | `polygon` | 实例轮廓 |
+| **已交付** | 分割多边形 | `polygon` | 实例轮廓；导入/导出 segment 包 |
 | **已交付** | 笔刷 mask | `mask` | strokes 进 JSON；位图 Blob 另阶段 |
-| **已交付** | 关键点 | `keypoint` | 点集；pose 骨架元数据另阶段 |
-| **已交付** | 旋转框 OBB | `obb` | 带角度（度） |
-| **已交付** | 整图分类 | `classification` | `items` 内 `type=classification` + `classId` |
+| **已交付** | 关键点 | `keypoint` | 点集；导入/导出 pose 包；骨架元数据另阶段 |
+| **已交付** | 旋转框 OBB | `obb` | 带角度（度）；导入/导出 obb 包 |
+| **已交付** | 整图分类 | `classification` | `items` 内 `type=classification` + `classId`；导出 classify；导入另阶段 |
 
-不在当前产品必做：polyline、椭圆、3D、视频 track、框属性、YOLO seg/pose/obb 包编解码等（日后另开需求）。
+不在当前产品必做：polyline、椭圆、3D、视频 track、框属性、classify 包导入、mask 位图 Blob 等（日后另开需求）。
 
 **标注台画布能力：** 多工具栏（仅启用∩已实现）、快捷键切工具、矩形/多边形/笔刷/关键点/OBB、分类点选、拖拽/变换、类别数字键、上一张/下一张、撤销；坐标与 API `shapes` 对齐。
 
@@ -76,7 +76,7 @@ DatasetVersion.manifest 原样冻结 shapes（含 type）
 | **类型判别** | 每条 shape 必有 `type`；整图分类可用 `type=classification` 或文档级 `classification` 字段（二选一，实现时固定并写进 API） |
 | **数据集启用集** | `Dataset.enabled_annotation_types: string[]`，P0 默认 `["rect"]`；保存标注时只允许启用集内类型 |
 | **校验** | 按 type 分派 validator（已注册 rect/polygon/mask/keypoint/obb/classification）；未知/未启用 → 422 |
-| **导入/导出** | 按导出**剖面**选 codec：`detect`/`segment`/`obb`/`pose`/`classify`；导入包 P0 仍以 detect 为主；不改 Asset/Version 主流程 |
+| **导入/导出** | 按**剖面**选 codec：导出 `detect`/`segment`/`obb`/`pose`/`classify`；导入 `detect`/`segment`/`obb`/`pose`；不改 Asset/Version 主流程 |
 | **版本快照** | 不解析业务语义，整份 JSON 冻结；旧版含新 type 的数据仍可只读导出（若 codec 已注册） |
 | **前端工具** | 工具栏只渲染 `enabled_annotation_types ∩ 已实现工具`；未实现类型不展示，避免半成品入口 |
 | **mask 二进制** | 若 mask 过大不宜进 JSONB，用 `storage_backend`+`storage_key` 挂附件，shape 内只存引用——表结构预留，P0 不实现 |
@@ -115,7 +115,7 @@ FastAPI（鉴权、领域用例）
 | DatasetAsset | 引用 + `split` + 可选 `assignee_user_id`（任务分配；薄版无任务包实体） |
 | Annotation | `(dataset_id, asset_id)`；`shapes` 为带 `type` 的异构列表 |
 | DatasetVersion | 不可变快照（含当时 `enabled_annotation_types` + shapes） |
-| DatasetImport | 导入记录；P0 绑定 detect codec，日后按类型扩展 |
+| DatasetImport | 导入记录；按剖面绑定 codec（detect/segment/obb/pose） |
 | FrameExtractJob | 一次抽帧任务及设置（mode/stride 等）；产出若干 frame |
 
 **不变式：**
@@ -368,16 +368,17 @@ frame_extract_jobs(
 
 ### D5. 导入流程（YOLO 包）
 
-约定包内至少能解析：`data.yaml`（或等价 names）、按 split 的 images 与 labels（或可推断的平面结构）。**P0 仅 detect 框格式**；seg/pose/obb 包格式随对应类型阶段再定。
+约定包内至少能解析：`data.yaml`（或等价 names）、按 split 的 images 与 labels（或可推断的平面结构）。导入剖面：`detect` / `segment` / `obb` / `pose`（与导出 label 行格式对称；`classify` 目录布局另阶段）。请求可带 `profile`；缺省时可读 `data.yaml` 的 `task:`，再回落 `detect`。
 
 ```text
-上传 zip
-  → 校验结构
-  → 创建 DatasetImport(pending)
+上传 zip + profile
+  → 校验结构 / 预解析
+  → 创建 DatasetImport(pending)；stats 记 profile
   → 解析 names → 项目词表按名字复用或新建，并按该顺序启用到目标数据集（不删除词表中其它类别）
+  → 确保 enabled_annotation_types 含剖面对应 type
   → 对每张图：hash → 复用或新建 Asset(origin=import, library_visible=false, folder_id=null, import_id=...)
-  → DatasetAsset + Annotation（由 txt 转内部 shapes）+ split
-  → Import succeeded + stats
+  → DatasetAsset + Annotation（按剖面 codec 将 txt 转内部 shapes）+ split
+  → Import succeeded + stats（含 profile）
 ```
 
 P0 默认：**导入到新建数据集**（实现简单）；导入到已有空数据集可作为同 API 的可选模式。
@@ -419,11 +420,11 @@ P0 默认：**导入到新建数据集**（实现简单）；导入到已有空�
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/projects/{projectId}/dataset-imports` | multipart：YOLO zip + `{ "datasetName" }` 或 `datasetId` |
-| GET | `/dataset-imports/{importId}` | 状态与 stats |
+| POST | `/projects/{projectId}/dataset-imports` | multipart：YOLO zip + `datasetName` 或 `datasetId` + 可选 `profile`（detect/segment/obb/pose） |
+| GET | `/dataset-imports/{importId}` | 状态与 stats（含 profile） |
 | GET | `/datasets/{datasetId}/imports` | 该数据集相关导入记录 |
 
-成功响应示例字段：`{ importId, datasetId, status, stats: { images, reused, created } }`。
+成功响应示例字段：`{ importId, datasetId, status, stats: { images, reused, created, profile } }`。
 
 #### 回溯
 

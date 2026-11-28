@@ -2,23 +2,37 @@
 
 ## Purpose
 
-支持导入已有 YOLO 检测数据集包，在无采集目录血缘的情况下创建或填充数据集、成员划分与标注；导入图默认仅数据集侧可见。
+支持导入已有 YOLO 训练包（按任务剖面），在无采集目录血缘的情况下创建或填充数据集、成员划分与标注；导入图默认仅数据集侧可见。
 
 ## ADDED Requirements
 
 ### Requirement: 导入 YOLO 数据集包
-系统 SHALL 以 **zip** 形式接受 YOLO 检测数据包（multipart 上传；含图像、labels 与 `data.yaml`），并创建或填充目标数据集的成员划分与工作标注。类别按 `data.yaml` 的 `names` 顺序处理：项目词表中已有同名类别则复用其 id，否则在项目词表中新建；再按该顺序启用到目标数据集（替换该数据集原先的启用列表，不删除词表中未被本次启用的其它类别）。标注行中的数字下标映射为对应类别的 `classId`。P0 支持导入到**新建数据集**或**已有空数据集**；非空数据集 MUST 拒绝。导入为异步任务，完成后可查询状态与 stats。
+系统 SHALL 以 **zip** 形式接受 YOLO 数据包（multipart 上传；含图像、labels 与 `data.yaml`），并创建或填充目标数据集的成员划分与工作标注。导入前 MUST 选择任务剖面之一：`detect`（`rect`）、`segment`（`polygon`）、`obb`、`pose`（`keypoint`）。若请求未显式指定剖面且 `data.yaml` 含 `task:`，系统 MAY 采用该值；否则默认 `detect`。类别按 `data.yaml` 的 `names` 顺序处理：项目词表中已有同名类别则复用其 id，否则在项目词表中新建；再按该顺序启用到目标数据集（替换该数据集原先的启用列表，不删除词表中未被本次启用的其它类别）。标注行中的数字下标映射为对应类别的 `classId`。导入成功后目标数据集的 `enabled_annotation_types` MUST 至少包含该剖面对应类型。P0 支持导入到**新建数据集**或**已有空数据集**；非空数据集 MUST 拒绝。导入为异步任务，完成后可查询状态与 stats（含所用剖面）。产品 UI SHALL 提供剖面选择（默认 `detect`）。笔刷 `mask` 与 `classify` 包结构本阶段不进入导入剖面。
 
-约定结构（与导出一致）：根目录 `data.yaml`；`train|val|test/images` 与对应 `labels`（同 stem 的 `.txt`，`cls cx cy w h` 归一化；可空）。
+约定结构（与对应导出剖面一致）：根目录 `data.yaml`；`train|val|test/images` 与对应 `labels`（同 stem 的 `.txt`；可空负样本）：
+
+| 剖面 | label 行 |
+|------|----------|
+| `detect` | `cls cx cy w h`（归一化） |
+| `segment` | `cls x1 y1 x2 y2 …`（归一化多边形顶点） |
+| `obb` | `cls x1 y1 x2 y2 x3 y3 x4 y4`（归一化四角） |
+| `pose` | `cls cx cy w h` + `kx ky v`×N（`data.yaml` 的 `kpt_shape: [N, 3]`；缺省则按行宽推断） |
 
 #### Scenario: 导入新建数据集
-- **WHEN** 用户上传合法 YOLO zip 并指定新建数据集名称
-- **THEN** 系统创建数据集，按包内类别名复用或新建项目类别并按该顺序启用，将包内图像与标签变为数据集成员及对应标注（标注 status=submitted，几何 `classId` 为对应项目类别）
+- **WHEN** 用户上传合法 YOLO zip 并指定新建数据集名称（剖面默认或显式 `detect`）
+- **THEN** 系统创建数据集，按包内类别名复用或新建项目类别并按该顺序启用，将包内图像与标签变为数据集成员及对应标注（标注 status=submitted，几何 `classId` 为对应项目类别），并启用 `rect`
+
+#### Scenario: 按 segment 剖面导入多边形
+- **WHEN** 用户以 `segment` 剖面上传含多边形 label 的合法 YOLO zip
+- **THEN** 工作区标注 items 为 `type=polygon`，数据集启用类型含 `polygon`
+
+#### Scenario: 按 obb / pose 剖面导入
+- **WHEN** 用户分别以 `obb` 或 `pose` 剖面上传对应格式的合法 YOLO zip
+- **THEN** 标注分别为 `type=obb` 或 `type=keypoint`，并启用对应类型
 
 #### Scenario: 非法包结构被拒绝
 - **WHEN** 用户上传缺少必要类别配置或无法解析的 zip
 - **THEN** 系统拒绝导入并说明原因
-
 ### Requirement: 导入素材默认不在素材库展示
 由导入创建的素材 SHALL 标记为非素材库可见（`library_visible = false`）；素材库默认目录浏览 MUST NOT 列出这些素材，但数据集成员列表与标注台 MUST 可访问其内容。
 

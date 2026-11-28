@@ -67,8 +67,9 @@ async def start_dataset_import(
     file: UploadFile = File(...),
     datasetName: str | None = Form(None),
     datasetId: UUID | None = Form(None),
+    profile: str | None = Form(None),
 ) -> ImportOut:
-    """multipart：YOLO zip + datasetName（新建）或 datasetId（空集）。仅 owner。"""
+    """multipart：YOLO zip + datasetName（新建）或 datasetId（空集）+ 可选 profile。仅 owner。"""
     raw = await file.read()
     name = file.filename or "package.zip"
     if not name.lower().endswith(".zip"):
@@ -86,6 +87,7 @@ async def start_dataset_import(
         dataset_name=datasetName,
         dataset_id=datasetId,
         enqueue_job=enqueue,
+        profile=profile,
     )
     return _out(imp)
 

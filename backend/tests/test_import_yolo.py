@@ -10,7 +10,14 @@ import zipfile
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.import_yolo import parse_data_yaml_names, parse_yolo_zip
+from app.services.import_yolo import (
+    decode_yolo_line,
+    parse_data_yaml_names,
+    parse_yolo_zip,
+    yolo_line_to_keypoint,
+    yolo_line_to_obb,
+    yolo_line_to_polygon,
+)
 
 
 def _h(u: str) -> dict[str, str]:
@@ -23,12 +30,12 @@ def _png(w: int = 100, h: int = 80, pad: bytes = b"") -> bytes:
     return b"\x89PNG\r\n\x1a\n" + chunk + pad
 
 
-def _yolo_zip(*, with_box: bool = True) -> bytes:
+def _yolo_zip(*, with_box: bool = True, task: str = "detect") -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr(
             "data.yaml",
-            'path: .\ntrain: train/images\nnames:\n  0: "缺陷"\n',
+            f'path: .\ntrain: train/images\nnames:\n  0: "缺陷"\ntask: {task}\n',
         )
         zf.writestr("train/images/a.png", _png(100, 80, b"\x11"))
         if with_box:
@@ -47,9 +54,59 @@ def test_parse_data_yaml_variants() -> None:
         "person",
         "car",
     ]
-    classes, images = parse_yolo_zip(_yolo_zip())
-    assert classes == ["缺陷"]
-    assert len(images) == 2
+    pkg = parse_yolo_zip(_yolo_zip())
+    assert pkg.classes == ["缺陷"]
+    assert len(pkg.images) == 2
+    assert pkg.task_hint == "detect"
+
+
+def test_decode_segment_obb_pose_lines() -> None:
+    cids = ["c1"]
+    poly = yolo_line_to_polygon(
+        "0 0.1 0.1 0.9 0.1 0.9 0.9 0.1 0.9".split(),
+        100,
+        100,
+        class_ids=cids,
+    )
+    assert poly is not None
+    assert poly["type"] == "polygon"
+    assert len(poly["points"]) == 4
+    assert abs(poly["points"][0][0] - 10) < 1e-6
+
+    obb = yolo_line_to_obb(
+        # axis-aligned 20x40 box centered at 50,50 → corners
+        "0 0.4 0.3 0.6 0.3 0.6 0.7 0.4 0.7".split(),
+        100,
+        100,
+        class_ids=cids,
+    )
+    assert obb is not None
+    assert obb["type"] == "obb"
+    assert abs(obb["cx"] - 50) < 1e-6
+    assert abs(obb["cy"] - 50) < 1e-6
+    assert abs(obb["w"] - 20) < 1e-6
+    assert abs(obb["h"] - 40) < 1e-6
+
+    kpt = yolo_line_to_keypoint(
+        "0 0.5 0.5 0.2 0.2 0.2 0.3 2 0.8 0.7 2".split(),
+        100,
+        100,
+        class_ids=cids,
+        kpt_count=2,
+    )
+    assert kpt is not None
+    assert kpt["type"] == "keypoint"
+    assert len(kpt["points"]) == 2
+    assert abs(kpt["points"][0]["x"] - 20) < 1e-6
+
+    seg = decode_yolo_line(
+        "segment",
+        "0 0.1 0.1 0.9 0.1 0.9 0.9".split(),
+        100,
+        100,
+        class_ids=cids,
+    )
+    assert seg is not None and seg["type"] == "polygon"
 
 
 def test_import_creates_hidden_assets_and_dedup() -> None:
@@ -91,10 +148,12 @@ def test_import_creates_hidden_assets_and_dedup() -> None:
         assert row["status"] == "succeeded", row
         assert row["stats"]["images"] == 2
         assert row["stats"]["created"] == 2
+        assert row["stats"]["profile"] == "detect"
 
         imported = client.get(
             f"/api/v1/datasets/{dataset_id}", headers=_h("imp-owner")
         ).json()
+        assert "rect" in imported["enabled_annotation_types"]
         assert imported["classes"][0]["name"] == "缺陷"
         class_id = imported["classes"][0]["id"]
         vocab = client.get(
@@ -167,3 +226,129 @@ def test_import_creates_hidden_assets_and_dedup() -> None:
             f"/api/v1/projects/{pid}/classes", headers=_h("imp-owner")
         ).json()
         assert len(vocab_after) == 1
+
+
+def _profile_zip(profile: str, label_line: str, *, yaml_extra: str = "") -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(
+            "data.yaml",
+            "path: .\ntrain: train/images\n"
+            'names:\n  0: "缺陷"\n'
+            f"task: {profile}\n{yaml_extra}",
+        )
+        zf.writestr("train/images/a.png", _png(100, 100, b"\x33"))
+        zf.writestr("train/labels/a.txt", label_line + "\n")
+    return buf.getvalue()
+
+
+def _wait_import(client: TestClient, import_id: str, user: str = "imp-owner") -> dict:
+    row = None
+    for _ in range(80):
+        row = client.get(
+            f"/api/v1/dataset-imports/{import_id}", headers=_h(user)
+        ).json()
+        if row["status"] in ("succeeded", "failed"):
+            break
+        time.sleep(0.15)
+    assert row is not None
+    return row
+
+
+def test_import_segment_profile() -> None:
+    z = _profile_zip(
+        "segment",
+        "0 0.1 0.1 0.9 0.1 0.9 0.9 0.1 0.9",
+    )
+    with TestClient(app) as client:
+        pid = client.post(
+            "/api/v1/projects", json={"name": "seg导入"}, headers=_h("imp-seg")
+        ).json()["id"]
+        r = client.post(
+            f"/api/v1/projects/{pid}/dataset-imports",
+            headers=_h("imp-seg"),
+            files={"file": ("seg.zip", z, "application/zip")},
+            data={"datasetName": "分割集", "profile": "segment"},
+        )
+        assert r.status_code == 202, r.text
+        row = _wait_import(client, r.json()["id"], "imp-seg")
+        assert row["status"] == "succeeded", row
+        assert row["stats"]["profile"] == "segment"
+        ds_id = r.json()["dataset_id"]
+        ds = client.get(f"/api/v1/datasets/{ds_id}", headers=_h("imp-seg")).json()
+        assert "polygon" in ds["enabled_annotation_types"]
+        mem = client.get(
+            f"/api/v1/datasets/{ds_id}/assets", headers=_h("imp-seg")
+        ).json()
+        ann = client.get(
+            f"/api/v1/datasets/{ds_id}/assets/{mem[0]['asset_id']}/annotation",
+            headers=_h("imp-seg"),
+        ).json()
+        items = ann["shapes"]["items"]
+        assert len(items) == 1
+        assert items[0]["type"] == "polygon"
+        assert len(items[0]["points"]) == 4
+
+
+def test_import_obb_and_pose_profiles() -> None:
+    obb_z = _profile_zip(
+        "obb",
+        "0 0.4 0.3 0.6 0.3 0.6 0.7 0.4 0.7",
+    )
+    pose_z = _profile_zip(
+        "pose",
+        "0 0.5 0.5 0.2 0.2 0.2 0.3 2 0.8 0.7 2",
+        yaml_extra="kpt_shape: [2, 3]\n",
+    )
+    with TestClient(app) as client:
+        pid = client.post(
+            "/api/v1/projects", json={"name": "obbpose导入"}, headers=_h("imp-op")
+        ).json()["id"]
+
+        r1 = client.post(
+            f"/api/v1/projects/{pid}/dataset-imports",
+            headers=_h("imp-op"),
+            files={"file": ("obb.zip", obb_z, "application/zip")},
+            data={"datasetName": "旋转集", "profile": "obb"},
+        )
+        assert r1.status_code == 202, r1.text
+        row1 = _wait_import(client, r1.json()["id"], "imp-op")
+        assert row1["status"] == "succeeded", row1
+        ds1 = client.get(
+            f"/api/v1/datasets/{r1.json()['dataset_id']}", headers=_h("imp-op")
+        ).json()
+        assert "obb" in ds1["enabled_annotation_types"]
+        mem1 = client.get(
+            f"/api/v1/datasets/{r1.json()['dataset_id']}/assets",
+            headers=_h("imp-op"),
+        ).json()
+        ann1 = client.get(
+            f"/api/v1/datasets/{r1.json()['dataset_id']}/assets/{mem1[0]['asset_id']}/annotation",
+            headers=_h("imp-op"),
+        ).json()
+        assert ann1["shapes"]["items"][0]["type"] == "obb"
+
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/dataset-imports",
+            headers=_h("imp-op"),
+            files={"file": ("pose.zip", pose_z, "application/zip")},
+            data={"datasetName": "姿态集", "profile": "pose"},
+        )
+        assert r2.status_code == 202, r2.text
+        row2 = _wait_import(client, r2.json()["id"], "imp-op")
+        assert row2["status"] == "succeeded", row2
+        assert row2["stats"]["profile"] == "pose"
+        ds2 = client.get(
+            f"/api/v1/datasets/{r2.json()['dataset_id']}", headers=_h("imp-op")
+        ).json()
+        assert "keypoint" in ds2["enabled_annotation_types"]
+        mem2 = client.get(
+            f"/api/v1/datasets/{r2.json()['dataset_id']}/assets",
+            headers=_h("imp-op"),
+        ).json()
+        ann2 = client.get(
+            f"/api/v1/datasets/{r2.json()['dataset_id']}/assets/{mem2[0]['asset_id']}/annotation",
+            headers=_h("imp-op"),
+        ).json()
+        assert ann2["shapes"]["items"][0]["type"] == "keypoint"
+        assert len(ann2["shapes"]["items"][0]["points"]) == 2

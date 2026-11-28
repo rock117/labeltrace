@@ -1,14 +1,15 @@
-"""导入 YOLO detect zip → 数据集成员与标注。"""
+"""导入 YOLO zip（detect/segment/obb/pose）→ 数据集成员与标注。"""
 
 from __future__ import annotations
 
 import io
+import math
 import mimetypes
 import re
 import zipfile
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -23,14 +24,22 @@ from app.models.dataset import Dataset, DatasetAsset
 from app.models.dataset_import import DatasetImport
 from app.services.assets import _sha256, _storage_key
 from app.services.assignment import default_owner_assignee_id
+from app.services.export_yolo import (
+    PROFILE_SHAPE_TYPE,
+    image_size_from_bytes,
+)
 from app.services.project_classes import ensure_classes_from_names
-from app.services.export_yolo import image_size_from_bytes
 from app.storage.factory import get_blob_store, get_default_write_backend
 
 logger = get_logger("labeltrace.import_yolo")
 
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 _SPLITS = ("train", "val", "test")
+
+ImportProfile = Literal["detect", "segment", "obb", "pose"]
+VALID_IMPORT_PROFILES: frozenset[str] = frozenset(
+    {"detect", "segment", "obb", "pose"}
+)
 
 
 @dataclass
@@ -41,6 +50,23 @@ class ParsedImage:
     stem: str
     data: bytes
     label_text: str | None  # None = 无 label 文件；"" = 空负样本
+
+
+@dataclass
+class ParsedPackage:
+    classes: list[str]
+    images: list[ParsedImage]
+    task_hint: str | None
+    kpt_count: int | None
+
+
+def normalize_import_profile(raw: Any) -> ImportProfile:
+    p = str(raw or "detect").strip().lower()
+    if p not in VALID_IMPORT_PROFILES:
+        raise ValidationAppError(
+            f"未知导入剖面: {raw}（可选: {', '.join(sorted(VALID_IMPORT_PROFILES))}）"
+        )
+    return p  # type: ignore[return-value]
 
 
 def _norm_zip_path(name: str) -> str:
@@ -101,6 +127,44 @@ def parse_data_yaml_names(text: str) -> list[str]:
     raise ValidationAppError("data.yaml 缺少可解析的 names")
 
 
+def parse_data_yaml_task(text: str) -> str | None:
+    m = re.search(
+        r"^task\s*:\s*['\"]?([A-Za-z_]+)['\"]?\s*$",
+        text,
+        flags=re.MULTILINE | re.IGNORECASE,
+    )
+    if not m:
+        return None
+    return m.group(1).strip().lower()
+
+
+def parse_data_yaml_kpt_shape(text: str) -> int | None:
+    """解析 kpt_shape: [N, 3] → N。"""
+    m = re.search(
+        r"^kpt_shape\s*:\s*\[\s*(\d+)\s*,\s*\d+\s*\]",
+        text,
+        flags=re.MULTILINE | re.IGNORECASE,
+    )
+    if not m:
+        return None
+    n = int(m.group(1))
+    return n if n > 0 else None
+
+
+def resolve_import_profile(
+    *,
+    explicit: str | None,
+    yaml_task: str | None,
+) -> ImportProfile:
+    if explicit is not None and str(explicit).strip():
+        return normalize_import_profile(explicit)
+    if yaml_task and yaml_task in VALID_IMPORT_PROFILES:
+        return normalize_import_profile(yaml_task)
+    if yaml_task == "classify":
+        raise ValidationAppError("本阶段不支持 classify 包导入")
+    return "detect"
+
+
 def yolo_line_to_xyxy(
     parts: list[str],
     width: int,
@@ -128,7 +192,6 @@ def yolo_line_to_xyxy(
     y1 = (cy * height) - bh / 2.0
     x2 = x1 + bw
     y2 = y1 + bh
-    # clamp
     x1 = max(0.0, min(float(width), x1))
     y1 = max(0.0, min(float(height), y1))
     x2 = max(0.0, min(float(width), x2))
@@ -142,11 +205,170 @@ def yolo_line_to_xyxy(
     }
 
 
+def yolo_line_to_polygon(
+    parts: list[str],
+    width: int,
+    height: int,
+    *,
+    class_ids: list[str],
+) -> dict[str, Any] | None:
+    # cls + at least 3 points (6 floats)
+    if len(parts) < 7 or width <= 0 or height <= 0:
+        return None
+    if (len(parts) - 1) % 2 != 0:
+        return None
+    try:
+        cls_idx = int(float(parts[0]))
+    except ValueError:
+        return None
+    if cls_idx < 0 or cls_idx >= len(class_ids):
+        return None
+    points: list[list[float]] = []
+    try:
+        for i in range(1, len(parts), 2):
+            x = float(parts[i]) * width
+            y = float(parts[i + 1]) * height
+            x = max(0.0, min(float(width), x))
+            y = max(0.0, min(float(height), y))
+            points.append([x, y])
+    except (ValueError, IndexError):
+        return None
+    if len(points) < 3:
+        return None
+    return {
+        "type": "polygon",
+        "classId": class_ids[cls_idx],
+        "points": points,
+    }
+
+
+def yolo_line_to_obb(
+    parts: list[str],
+    width: int,
+    height: int,
+    *,
+    class_ids: list[str],
+) -> dict[str, Any] | None:
+    # cls + 8 normalized corner coords
+    if len(parts) < 9 or width <= 0 or height <= 0:
+        return None
+    try:
+        cls_idx = int(float(parts[0]))
+        coords = [float(p) for p in parts[1:9]]
+    except ValueError:
+        return None
+    if cls_idx < 0 or cls_idx >= len(class_ids):
+        return None
+    pts = [
+        (coords[0] * width, coords[1] * height),
+        (coords[2] * width, coords[3] * height),
+        (coords[4] * width, coords[5] * height),
+        (coords[6] * width, coords[7] * height),
+    ]
+    cx = sum(p[0] for p in pts) / 4.0
+    cy = sum(p[1] for p in pts) / 4.0
+    dx = pts[1][0] - pts[0][0]
+    dy = pts[1][1] - pts[0][1]
+    bw = math.hypot(dx, dy)
+    # adjacent edge: prefer 0→3 (export order); fallback 0→2 if nearly collinear
+    dx2 = pts[3][0] - pts[0][0]
+    dy2 = pts[3][1] - pts[0][1]
+    bh = math.hypot(dx2, dy2)
+    if bh < 1e-6:
+        dx2 = pts[2][0] - pts[1][0]
+        dy2 = pts[2][1] - pts[1][1]
+        bh = math.hypot(dx2, dy2)
+    if bw <= 0 or bh <= 0:
+        return None
+    angle = math.degrees(math.atan2(dy, dx))
+    return {
+        "type": "obb",
+        "classId": class_ids[cls_idx],
+        "cx": cx,
+        "cy": cy,
+        "w": bw,
+        "h": bh,
+        "angle": angle,
+    }
+
+
+def yolo_line_to_keypoint(
+    parts: list[str],
+    width: int,
+    height: int,
+    *,
+    class_ids: list[str],
+    kpt_count: int | None,
+) -> dict[str, Any] | None:
+    # cls cx cy w h + (x y v)*N
+    if len(parts) < 8 or width <= 0 or height <= 0:
+        return None
+    try:
+        cls_idx = int(float(parts[0]))
+    except ValueError:
+        return None
+    if cls_idx < 0 or cls_idx >= len(class_ids):
+        return None
+    rest = parts[5:]
+    if len(rest) % 3 != 0:
+        return None
+    inferred = len(rest) // 3
+    n = kpt_count if kpt_count and kpt_count > 0 else inferred
+    if n <= 0:
+        return None
+    points: list[dict[str, Any]] = []
+    try:
+        for i in range(n):
+            if i >= inferred:
+                break
+            base = i * 3
+            x = float(rest[base]) * width
+            y = float(rest[base + 1]) * height
+            v = int(float(rest[base + 2]))
+            if v not in (0, 1, 2):
+                v = 2
+            x = max(0.0, min(float(width), x))
+            y = max(0.0, min(float(height), y))
+            if v == 0:
+                continue
+            points.append({"x": x, "y": y, "v": v})
+    except (ValueError, IndexError):
+        return None
+    if not points:
+        return None
+    return {
+        "type": "keypoint",
+        "classId": class_ids[cls_idx],
+        "points": points,
+    }
+
+
+def decode_yolo_line(
+    profile: ImportProfile,
+    parts: list[str],
+    width: int,
+    height: int,
+    *,
+    class_ids: list[str],
+    kpt_count: int | None = None,
+) -> dict[str, Any] | None:
+    if profile == "detect":
+        return yolo_line_to_xyxy(parts, width, height, class_ids=class_ids)
+    if profile == "segment":
+        return yolo_line_to_polygon(parts, width, height, class_ids=class_ids)
+    if profile == "obb":
+        return yolo_line_to_obb(parts, width, height, class_ids=class_ids)
+    if profile == "pose":
+        return yolo_line_to_keypoint(
+            parts, width, height, class_ids=class_ids, kpt_count=kpt_count
+        )
+    return None
+
+
 def _find_data_yaml(names: list[str]) -> str | None:
     candidates = [n for n in names if _norm_zip_path(n).lower().endswith("data.yaml")]
     if not candidates:
         return None
-    # 优先根目录较短路径
     candidates.sort(key=lambda n: (_norm_zip_path(n).count("/"), len(n)))
     return candidates[0]
 
@@ -169,8 +391,8 @@ def _infer_split_and_role(path: str) -> tuple[str | None, str | None, str]:
     return split, role, filename
 
 
-def parse_yolo_zip(zip_bytes: bytes) -> tuple[list[str], list[ParsedImage]]:
-    """解析 YOLO detect zip；非法结构抛 ValidationAppError。"""
+def parse_yolo_zip(zip_bytes: bytes) -> ParsedPackage:
+    """解析 YOLO zip；非法结构抛 ValidationAppError。"""
     try:
         zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
     except zipfile.BadZipFile as e:
@@ -192,11 +414,11 @@ def parse_yolo_zip(zip_bytes: bytes) -> tuple[list[str], list[ParsedImage]]:
         classes = parse_data_yaml_names(yaml_text)
         if not classes:
             raise ValidationAppError("data.yaml names 为空")
+        task_hint = parse_data_yaml_task(yaml_text)
+        kpt_count = parse_data_yaml_kpt_shape(yaml_text)
 
-        # 建 labels 索引： (split or '_', stem) -> text
         labels: dict[tuple[str, str], str] = {}
         images_meta: list[tuple[str, str, str, str]] = []
-        # (split, source_path, filename, stem)
 
         for name in names:
             path = _norm_zip_path(name)
@@ -214,11 +436,9 @@ def parse_yolo_zip(zip_bytes: bytes) -> tuple[list[str], list[ParsedImage]]:
             elif role == "images" and ext in _IMAGE_EXTS:
                 images_meta.append((split or "train", path, filename, stem))
             elif role is None and ext in _IMAGE_EXTS and "labels" not in path.lower():
-                # 平面 images/ 已由 role 覆盖；其它宽松：仅当路径含 images
                 continue
 
         if not images_meta:
-            # 再试：任意 */*.jpg 且同级或平行 labels
             for name in names:
                 path = _norm_zip_path(name)
                 ext = PurePosixPath(path).suffix.lower()
@@ -266,12 +486,30 @@ def parse_yolo_zip(zip_bytes: bytes) -> tuple[list[str], list[ParsedImage]]:
 
     if not parsed:
         raise ValidationAppError("zip 内没有可导入的图像")
-    return classes, parsed
+    return ParsedPackage(
+        classes=classes,
+        images=parsed,
+        task_hint=task_hint,
+        kpt_count=kpt_count,
+    )
 
 
 def _ensure_classes(db: Session, dataset_id: UUID, classes: list[str]) -> list[str]:
     """按 data.yaml 名字复用或新建项目类别，并按该顺序启用。"""
     return ensure_classes_from_names(db, dataset_id, classes)
+
+
+def _ensure_profile_annotation_type(ds: Dataset, profile: ImportProfile) -> str:
+    shape_type = PROFILE_SHAPE_TYPE.get(profile, "rect")
+    enabled = list(ds.enabled_annotation_types or [])
+    if shape_type not in enabled:
+        # 导入剖面定义主类型：空集/新建用单类型；已有启用集则并入
+        if not enabled:
+            enabled = [shape_type]
+        else:
+            enabled = [*enabled, shape_type]
+        ds.enabled_annotation_types = enabled
+    return shape_type
 
 
 def run_dataset_import(import_id: UUID) -> dict[str, Any]:
@@ -291,7 +529,11 @@ def run_dataset_import(import_id: UUID) -> dict[str, Any]:
             raise ValidationAppError("导入包对象不存在")
         zip_bytes = b"".join(store.get(imp.storage_key))
 
-        classes, images = parse_yolo_zip(zip_bytes)
+        pkg = parse_yolo_zip(zip_bytes)
+        profile = resolve_import_profile(
+            explicit=(imp.stats or {}).get("profile"),
+            yaml_task=pkg.task_hint,
+        )
 
         ds = db.get(Dataset, imp.dataset_id) if imp.dataset_id else None
         if ds is None:
@@ -302,11 +544,11 @@ def run_dataset_import(import_id: UUID) -> dict[str, Any]:
             .select_from(DatasetAsset)
             .where(DatasetAsset.dataset_id == ds.id)
         )
-        # 允许空集导入；非空则拒绝（P0）
         if member_count and member_count > 0:
             raise ValidationAppError("目标数据集非空，P0 仅支持导入到新建或空数据集")
 
-        class_ids = _ensure_classes(db, ds.id, classes)
+        class_ids = _ensure_classes(db, ds.id, pkg.classes)
+        _ensure_profile_annotation_type(ds, profile)
         default_assignee = default_owner_assignee_id(
             db, ds.project_id, imp.created_by
         )
@@ -317,7 +559,7 @@ def run_dataset_import(import_id: UUID) -> dict[str, Any]:
         write_backend = get_default_write_backend()
         write_store = get_blob_store(write_backend)
 
-        for img in images:
+        for img in pkg.images:
             digest = _sha256(img.data)
             existing = db.scalar(
                 select(Asset).where(
@@ -374,7 +616,6 @@ def run_dataset_import(import_id: UUID) -> dict[str, Any]:
             else:
                 member.split = img.split
 
-            # 标注
             items: list[dict[str, Any]] = []
             iw = asset.width or w
             ih = asset.height or h
@@ -384,8 +625,13 @@ def run_dataset_import(import_id: UUID) -> dict[str, Any]:
                     if not line or line.startswith("#"):
                         continue
                     parts = line.split()
-                    shape = yolo_line_to_xyxy(
-                        parts, int(iw), int(ih), class_ids=class_ids
+                    shape = decode_yolo_line(
+                        profile,
+                        parts,
+                        int(iw),
+                        int(ih),
+                        class_ids=class_ids,
+                        kpt_count=pkg.kpt_count,
                     )
                     if shape is not None:
                         items.append(shape)
@@ -414,22 +660,24 @@ def run_dataset_import(import_id: UUID) -> dict[str, Any]:
             annotated += 1
 
         stats = {
-            "images": len(images),
+            "images": len(pkg.images),
             "created": created,
             "reused": reused,
             "annotated": annotated,
-            "classes": classes,
+            "classes": pkg.classes,
             "packageName": imp.package_name,
+            "profile": profile,
         }
         imp.status = "succeeded"
         imp.stats = stats
         imp.error_message = None
         db.commit()
         logger.info(
-            "dataset_import_done import_id=%s dataset_id=%s images=%s created=%s reused=%s",
+            "dataset_import_done import_id=%s dataset_id=%s profile=%s images=%s created=%s reused=%s",
             import_id,
             ds.id,
-            len(images),
+            profile,
+            len(pkg.images),
             created,
             reused,
         )
@@ -462,6 +710,7 @@ def create_dataset_import(
     dataset_name: str | None,
     dataset_id: UUID | None,
     enqueue_job,
+    profile: str | None = None,
 ) -> DatasetImport:
     """校验权限与目标集，落盘 zip，创建记录并入队。"""
     from app.auth.deps import OWNER_ROLES, get_membership, has_any_role
@@ -475,10 +724,11 @@ def create_dataset_import(
 
     if not zip_bytes:
         raise ValidationAppError("上传文件为空")
-    # 预校验结构（失败则不建记录）
-    classes, images = parse_yolo_zip(zip_bytes)
-    if not images:
+    pkg = parse_yolo_zip(zip_bytes)
+    if not pkg.images:
         raise ValidationAppError("包内无图像")
+    resolved = resolve_import_profile(explicit=profile, yaml_task=pkg.task_hint)
+    shape_type = PROFILE_SHAPE_TYPE[resolved]
 
     ds: Dataset | None = None
     if dataset_id is not None:
@@ -492,15 +742,16 @@ def create_dataset_import(
         )
         if cnt and cnt > 0:
             raise ValidationAppError("目标数据集非空，请新建数据集或清空后再导入")
+        _ensure_profile_annotation_type(ds, resolved)
     elif dataset_name and dataset_name.strip():
         ds = Dataset(
             project_id=project_id,
             name=dataset_name.strip(),
-            enabled_annotation_types=["rect"],
+            enabled_annotation_types=[shape_type],
         )
         db.add(ds)
         db.flush()
-        ensure_classes_from_names(db, ds.id, classes)
+        ensure_classes_from_names(db, ds.id, pkg.classes)
     else:
         raise ValidationAppError("须提供 datasetName 或 datasetId")
 
@@ -509,7 +760,7 @@ def create_dataset_import(
         dataset_id=ds.id,
         package_name=(package_name or "package.zip").strip() or "package.zip",
         status="pending",
-        stats={},
+        stats={"profile": resolved},
         created_by=user_id,
     )
     db.add(imp)
@@ -521,15 +772,20 @@ def create_dataset_import(
     imp.storage_backend = backend
     imp.storage_key = key
 
-    job = enqueue_job(db, "yolo_import", {"import_id": str(imp.id)})
+    job = enqueue_job(
+        db,
+        "yolo_import",
+        {"import_id": str(imp.id), "profile": resolved},
+    )
     imp.job_id = job.id
     db.commit()
     db.refresh(imp)
     logger.info(
-        "dataset_import_created import_id=%s dataset_id=%s job_id=%s images=%s",
+        "dataset_import_created import_id=%s dataset_id=%s job_id=%s profile=%s images=%s",
         imp.id,
         ds.id,
         job.id,
-        len(images),
+        resolved,
+        len(pkg.images),
     )
     return imp

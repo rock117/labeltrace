@@ -2,7 +2,7 @@
 
 ## Purpose
 
-提供按数据集隔离的标注工作区；支持检测框、多边形、笔刷 mask、关键点、旋转框与整图分类。载荷用带 `type` 的 shape 项，按数据集启用集校验。YOLO 导出按剖面分别处理 detect/segment/obb/pose/classify；导入包格式 P0 仍以 detect 为主。
+提供按数据集隔离的标注工作区；支持检测框、多边形、笔刷 mask、关键点、旋转框与整图分类。载荷用带 `type` 的 shape 项，按数据集启用集校验。YOLO 导入/导出按剖面分别处理：导出含 detect/segment/obb/pose/classify；导入含 detect/segment/obb/pose（classify / mask 另阶段）。
 
 ## ADDED Requirements
 

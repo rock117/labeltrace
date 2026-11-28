@@ -66,7 +66,7 @@
 
 - [x] 7.1 实现 `(dataset, asset)` 标注 PUT/GET（shapes 含必填 `type`；P0 校验仅 `rect`），并验证非成员写入被拒
 - [x] 7.2 实现按 Dataset 启用类型 + 后端 Registry 校验，提交未启用/`polygon` 等返回 422，并补充测试
-- [x] 7.2b 注册并实现 polygon/mask/keypoint/obb/classification 校验与标注台工具；数据集可改启用类型；YOLO 导出仍仅 rect
+- [x] 7.2b 注册并实现 polygon/mask/keypoint/obb/classification 校验与标注台工具；数据集可改启用类型；YOLO 导入/导出按剖面
 - [x] 7.3 增加跨数据集隔离测试：同图两数据集标注互不影响
 - [x] 7.4 固定内部坐标 `format` 的序列化约定并补充单测（与 design Open Question 收口后一致）
 - [x] 7.5 前端工具注册表只挂载已实现且数据集已启用的类型；工具栏 = 启用 ∩ 已实现
@@ -123,6 +123,7 @@
 - [x] 6.2 实现导入创建 Asset（`origin=import`, `library_visible=false`）+ 成员 + 标注 + split，并验证素材库目录看不到、数据集内看得到
 - [x] 6.3 实现导入去重复用已有 hash，并验证 `stats.reused` 与不重复存盘
 - [x] 6.4 实现导入状态查询 API，并验证成功后血缘可关联 `importId`
+- [x] 6.5 导入剖面：detect/segment/obb/pose；Form `profile` + yaml `task` 回落；启用对应标注类型；数据集页下拉；单测
 
 ### 8b. YOLO 导出
 
@@ -139,8 +140,8 @@
 ## 后续规划（不阻塞本 change）
 
 - 视频时间轴 scrub UI、跨帧 track_id
-- YOLO seg / pose / OBB 包导入导出；mask 位图 BlobStore；pose skeleton 元数据
-- 各类型对应导入导出与版本兼容
+- YOLO classify 包导入；mask 位图 BlobStore；pose skeleton 元数据
+- 其它训练格式（COCO 等）
 
 ## Workflow follow-up
 
