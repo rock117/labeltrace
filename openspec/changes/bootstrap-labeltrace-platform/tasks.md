@@ -66,9 +66,10 @@
 
 - [x] 7.1 实现 `(dataset, asset)` 标注 PUT/GET（shapes 含必填 `type`；P0 校验仅 `rect`），并验证非成员写入被拒
 - [x] 7.2 实现按 Dataset 启用类型 + 后端 Registry 校验，提交未启用/`polygon` 等返回 422，并补充测试
+- [x] 7.2b 注册并实现 polygon/mask/keypoint/obb/classification 校验与标注台工具；数据集可改启用类型；YOLO 导出仍仅 rect
 - [x] 7.3 增加跨数据集隔离测试：同图两数据集标注互不影响
 - [x] 7.4 固定内部坐标 `format` 的序列化约定并补充单测（与 design Open Question 收口后一致）
-- [x] 7.5 前端工具注册表只挂载已实现且数据集已启用的类型（P0 仅 rect 工具），并确认无其它类型入口
+- [x] 7.5 前端工具注册表只挂载已实现且数据集已启用的类型；工具栏 = 启用 ∩ 已实现
 
 ## 8a. 版本发版（主体：不含 YOLO 导出）
 
@@ -137,7 +138,7 @@
 ## 后续规划（不阻塞本 change）
 
 - 视频时间轴 scrub UI、跨帧 track_id
-- 标注类型：`polygon` / `mask` / `keypoint|pose` / `obb` / `classification`
+- YOLO seg / pose / OBB 包导入导出；mask 位图 BlobStore；pose skeleton 元数据
 - 各类型对应导入导出与版本兼容
 
 ## Workflow follow-up

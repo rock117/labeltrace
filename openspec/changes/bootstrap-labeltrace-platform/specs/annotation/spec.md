@@ -2,7 +2,7 @@
 
 ## Purpose
 
-提供按数据集隔离的标注工作区；P0 交付 YOLO 检测框，载荷用可扩展的 shape 类型字段，以便后续增加分割、关键点、OBB、分类等类型而不推翻存储模型。
+提供按数据集隔离的标注工作区；支持检测框、多边形、笔刷 mask、关键点、旋转框与整图分类。载荷用带 `type` 的 shape 项，按数据集启用集校验。YOLO zip 导入/导出仍仅处理 `rect`（其它包格式另开）。
 
 ## ADDED Requirements
 
@@ -28,27 +28,42 @@
 - **WHEN** 素材 X 在数据集 A 与数据集 B 中分别有不同检测框
 - **THEN** 读取 A 得到 A 的框，读取 B 得到 B 的框
 
-### Requirement: 检测框载荷（P0）
-P0 工作标注 SHALL 支持类型为检测框（`rect`）的 YOLO 检测几何，包含稳定类别引用 `classId`（对应项目词表中的类别 id）与边界框，坐标采用项目约定的内部格式。保存时 `classId` MUST 属于该数据集当前启用的类别集合。
+### Requirement: 多类型标注载荷
+工作标注 SHALL 支持以下已注册类型（绝对像素坐标，容器 `format` 兼容 `xyxy_abs`）；每条 MUST 含 `type` 与（除空提交外）属于本数据集启用词表的 `classId`：
+
+| type | 载荷要点 |
+|------|----------|
+| `rect` | `bbox: [x1,y1,x2,y2]` |
+| `polygon` | `points: [[x,y],…]`（≥3） |
+| `obb` | `cx,cy,w,h` 与 `angle`（度） |
+| `keypoint` | `points: [{x,y,v?}]`，`v` 可选 0/1/2 |
+| `mask` | `strokes: [{points:[[x,y],…], width}]`（笔刷；位图 Blob 另阶段） |
+| `classification` | 仅 `classId`（整图；可多条表示多标签） |
+
+保存时每条 `type` MUST 属于该数据集 `enabled_annotation_types`，且服务端已注册校验器。
 
 #### Scenario: 框的读写一致
 - **WHEN** 客户端保存一组检测框后再次加载该标注
 - **THEN** 返回的 `classId` 与几何与保存时一致
 
+#### Scenario: 多边形读写一致
+- **WHEN** 客户端保存 `type=polygon` 且数据集已启用 polygon
+- **THEN** 再次加载得到相同 `points` 与 `classId`
+
 #### Scenario: 拒绝未知类别
 - **WHEN** 客户端提交的 `classId` 不属于该数据集
 - **THEN** 系统拒绝该请求
 
-### Requirement: Shape 类型可扩展
-每条几何 SHALL 带有类型判别字段 `type`；保存时每条 `type` MUST 属于该数据集的启用标注类型，且 MUST 为服务端已注册可校验的类型。P0 MUST 注册并接受 `rect`。产品必做的其它类型（`polygon`、`mask`、`keypoint`/`pose`、`obb`、`classification`）在架构上预留，启用前 MUST 拒绝写入。
-
-#### Scenario: P0 接受 rect
-- **WHEN** 客户端向仅启用 `rect` 的数据集提交仅含 `type=rect` 的 shapes
+#### Scenario: 接受已启用的注册类型
+- **WHEN** 客户端向已启用对应类型的数据集提交合法 shapes
 - **THEN** 系统成功保存
 
-#### Scenario: 拒绝未启用或未实现的类型
-- **WHEN** 客户端提交 `type=polygon` 但数据集未启用该类型或服务端尚未注册该类型
+#### Scenario: 拒绝未启用的类型
+- **WHEN** 客户端提交 `type=polygon` 但数据集未启用 polygon
 - **THEN** 系统拒绝该请求并说明原因
+
+### Requirement: 标注台多工具交互
+产品 UI SHALL 仅展示「已实现 ∩ 数据集已启用」的工具；支持快捷键切换工具、绘制过程中 Esc 取消、多边形 Enter/双击闭合；分类工具通过点选类别增删整图标签而非画布拖拽。交互应尽量减少多余点击（对齐常见标注产品如 Roboflow 的工具条 + 快捷键习惯）。
 
 ### Requirement: 标注状态
 系统 SHALL 至少支持工作标注状态 `draft` 与 `submitted`。产品主路径：用户在工作区标注台**切换成员或离开标注台**时，若当前图有未保存改动，SHALL 自动写入为 `submitted`（离开本张即视为标完，无需每张再点提交）。用户仍可显式「仅存草稿」写入 `draft`，或「提交本张」留在当前图。

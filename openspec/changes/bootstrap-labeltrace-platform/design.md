@@ -46,20 +46,20 @@
 
 | 优先级 | 类型 | `shapes[].type` | 说明 |
 |--------|------|-----------------|------|
-| **P0** | 检测框 | `rect` | YOLO detect；导入/导出 detect 包 |
-| P1+ | 分割多边形 | `polygon` | 实例轮廓 |
-| P1+ | 实例/语义 mask | `mask` | 刷子/位图；二进制可走 BlobStore |
-| P1+ | 关键点 / pose | `keypoint` / `pose` | 点与骨架；pose 可含 skeleton 元数据 |
-| P1+ | 旋转框 OBB | `obb` | 带角度 |
-| P1+ | 整图分类 | `classification` | 可放 `items` 或 annotation 文档级字段 |
+| **已交付** | 检测框 | `rect` | YOLO detect；导入/导出 detect 包 |
+| **已交付** | 分割多边形 | `polygon` | 实例轮廓 |
+| **已交付** | 笔刷 mask | `mask` | strokes 进 JSON；位图 Blob 另阶段 |
+| **已交付** | 关键点 | `keypoint` | 点集；pose 骨架元数据另阶段 |
+| **已交付** | 旋转框 OBB | `obb` | 带角度（度） |
+| **已交付** | 整图分类 | `classification` | `items` 内 `type=classification` + `classId` |
 
-不在当前产品必做：polyline、椭圆、3D、视频 track、框属性等（日后另开需求）。
+不在当前产品必做：polyline、椭圆、3D、视频 track、框属性、YOLO seg/pose/obb 包编解码等（日后另开需求）。
 
-**标注台（P0）画布能力：** 矩形检测框、拖拽/锚点缩放、滚轮缩放与平移、类别快捷键、上一张/下一张、本地撤销；坐标与 API 的 `shapes`/`format` 对齐后提交。
+**标注台画布能力：** 多工具栏（仅启用∩已实现）、快捷键切工具、矩形/多边形/笔刷/关键点/OBB、分类点选、拖拽/变换、类别数字键、上一张/下一张、撤销；坐标与 API `shapes` 对齐。
 
 #### D1.1 标注类型扩展架构（领域一次建模）
 
-目标：**P0 只实现 `rect` 工具与校验**，但领域/API/存储/前端注册表按多类型设计，后续加类型以「注册新 Handler」为主，避免改核心表结构。
+目标：领域/API/存储/前端注册表按多类型设计；加类型以「注册新 Handler」为主，避免改核心表结构。当前已注册并实现上表「已交付」类型。
 
 ```text
                     ┌─ AnnotationTypeRegistry（后端）
@@ -75,8 +75,8 @@ DatasetVersion.manifest 原样冻结 shapes（含 type）
 |--------|------|
 | **类型判别** | 每条 shape 必有 `type`；整图分类可用 `type=classification` 或文档级 `classification` 字段（二选一，实现时固定并写进 API） |
 | **数据集启用集** | `Dataset.enabled_annotation_types: string[]`，P0 默认 `["rect"]`；保存标注时只允许启用集内类型 |
-| **校验** | 按 type 分派 validator（P0 仅注册 `rect`）；未知/未启用 → 422 |
-| **导入/导出** | 按 type（或数据集任务剖面）选 codec（P0：YOLO detect txt）；新类型加 codec，不改 Asset/Version 主流程 |
+| **校验** | 按 type 分派 validator（已注册 rect/polygon/mask/keypoint/obb/classification）；未知/未启用 → 422 |
+| **导入/导出** | 按 type 选 codec；**当前仅 YOLO detect txt（rect）**；seg/pose/obb 包另阶段，不改 Asset/Version 主流程 |
 | **版本快照** | 不解析业务语义，整份 JSON 冻结；旧版含新 type 的数据仍可只读导出（若 codec 已注册） |
 | **前端工具** | 工具栏只渲染 `enabled_annotation_types ∩ 已实现工具`；未实现类型不展示，避免半成品入口 |
 | **mask 二进制** | 若 mask 过大不宜进 JSONB，用 `storage_backend`+`storage_key` 挂附件，shape 内只存引用——表结构预留，P0 不实现 |

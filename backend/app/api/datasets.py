@@ -20,7 +20,13 @@ from app.auth.deps import (
     has_any_role,
     require_project_role,
 )
-from app.core.errors import ForbiddenError, NotFoundError, ValidationAppError
+from app.annotation.registry import REGISTERED_TYPES, get_registry
+from app.core.errors import (
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationAppError,
+)
 from app.core.logging import get_logger
 from app.db.session import get_db
 from app.models.annotation import Annotation
@@ -221,14 +227,49 @@ def get_dataset(
     return _dataset_out(db, ds)
 
 
-class DatasetRename(BaseModel):
-    name: str = Field(..., min_length=1, max_length=256)
+class DatasetPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=256)
+    enabled_annotation_types: list[str] | None = Field(
+        default=None, alias="enabledAnnotationTypes"
+    )
+
+    model_config = {"populate_by_name": True}
+
+
+def _set_enabled_annotation_types(
+    db: Session, ds: Dataset, types: list[str]
+) -> None:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in types:
+        t = str(raw).strip()
+        if not t or t in seen:
+            continue
+        if t not in REGISTERED_TYPES or not get_registry().is_registered(t):
+            raise ValidationAppError(f"未知或不支持的标注类型: {t}")
+        seen.add(t)
+        cleaned.append(t)
+    if not cleaned:
+        raise ValidationAppError("至少启用一种标注类型")
+    prev = set(ds.enabled_annotation_types or [])
+    removed = prev - set(cleaned)
+    if removed:
+        for ann in db.scalars(
+            select(Annotation).where(Annotation.dataset_id == ds.id)
+        ).all():
+            items = (ann.shapes or {}).get("items") or []
+            for item in items:
+                if isinstance(item, dict) and item.get("type") in removed:
+                    raise ConflictError(
+                        f"标注类型 {item.get('type')} 仍被本数据集标注引用，无法停用"
+                    )
+    ds.enabled_annotation_types = cleaned
 
 
 @router.patch("/datasets/{dataset_id}", response_model=DatasetOut)
-def rename_dataset(
+def patch_dataset(
     dataset_id: UUID,
-    body: DatasetRename,
+    body: DatasetPatch,
     user: Annotated[CurrentUser, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DatasetOut:
@@ -238,13 +279,16 @@ def rename_dataset(
     m = get_membership(db, ds.project_id, user.id)
     if m is None or not has_any_role(m, WRITE_ROLES):
         raise ForbiddenError("权限不足")
-    name = body.name.strip()
-    if not name:
-        raise ValidationAppError("数据集名称无效")
-    ds.name = name
+    if body.name is not None:
+        name = body.name.strip()
+        if not name:
+            raise ValidationAppError("数据集名称无效")
+        ds.name = name
+    if body.enabled_annotation_types is not None:
+        _set_enabled_annotation_types(db, ds, body.enabled_annotation_types)
     db.commit()
     db.refresh(ds)
-    logger.info("dataset_renamed dataset_id=%s name=%s", dataset_id, name)
+    logger.info("dataset_patched dataset_id=%s", dataset_id)
     return _dataset_out(db, ds)
 
 

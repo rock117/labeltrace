@@ -11,6 +11,7 @@ import type {
   ProjectExtractJob,
   ProjectMember,
 } from '../lib/types'
+import { ANNOTATION_TYPE_OPTIONS } from '../lib/annotationShapes'
 import { useAppStore } from '../store/appStore'
 import { formatError } from '../hooks/useAsync'
 import { useActionPending } from '../hooks/useActionPending'
@@ -59,6 +60,7 @@ function DatasetsInner() {
   const [importName, setImportName] = useState('')
   const [projectClasses, setProjectClasses] = useState<ProjectClass[]>([])
   const [enabledIds, setEnabledIds] = useState<string[]>([])
+  const [enabledTypes, setEnabledTypes] = useState<string[]>(['rect'])
   const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
   const [assignTo, setAssignTo] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -103,6 +105,9 @@ function DatasetsInner() {
       setStoredDataset({ id: ds.id, name: ds.name }, { projectId })
       setActive(ds)
       setEnabledIds(ds.classes.map((c) => c.id))
+      setEnabledTypes(ds.enabled_annotation_types?.length
+        ? [...ds.enabled_annotation_types]
+        : ['rect'])
       setMembers(mem)
       setSources(src)
       setPickedMembers(new Set())
@@ -128,6 +133,35 @@ function DatasetsInner() {
         setDatasets((prevDs) => prevDs.map((d) => (d.id === ds.id ? ds : d)))
       } catch (e) {
         setEnabledIds(prev)
+        setError(formatError(e))
+      }
+    })
+  }
+
+  const saveEnabledTypes = async (types: string[]) => {
+    if (!active) return
+    if (types.length === 0) {
+      setError('至少启用一种标注类型')
+      return
+    }
+    const prev = enabledTypes
+    setEnabledTypes(types)
+    setError(null)
+    await run('ann-types', async () => {
+      try {
+        const ds = await api<Dataset>(`/v1/datasets/${active.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ enabledAnnotationTypes: types }),
+        })
+        setActive(ds)
+        setEnabledTypes(
+          ds.enabled_annotation_types?.length
+            ? [...ds.enabled_annotation_types]
+            : ['rect'],
+        )
+        setDatasets((prevDs) => prevDs.map((d) => (d.id === ds.id ? ds : d)))
+      } catch (e) {
+        setEnabledTypes(prev)
         setError(formatError(e))
       }
     })
@@ -613,6 +647,57 @@ function DatasetsInner() {
                       版本
                     </Link>
                   </div>
+                </div>
+              </div>
+
+              <div className="lt-panel" style={{ padding: '1rem', marginBottom: '1rem' }}>
+                <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem' }}>标注类型</h3>
+                <p
+                  style={{
+                    margin: '0 0 0.75rem',
+                    fontSize: 13,
+                    color: 'var(--lt-fg-muted)',
+                  }}
+                >
+                  勾选后标注台出现对应工具（快捷键 B/P/W/K/O/C）。默认仅检测框；仍被本集标注引用的类型不能取消。YOLO 导出仍只含检测框。
+                </p>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 10,
+                    marginBottom: '0.25rem',
+                  }}
+                >
+                  {ANNOTATION_TYPE_OPTIONS.map((opt) => {
+                    const checked = enabledTypes.includes(opt.type)
+                    return (
+                      <label
+                        key={opt.type}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          fontSize: 13,
+                          opacity: is('ann-types') ? 0.7 : 1,
+                        }}
+                        title={opt.hint}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={is('ann-types')}
+                          onChange={() => {
+                            const next = checked
+                              ? enabledTypes.filter((t) => t !== opt.type)
+                              : [...enabledTypes, opt.type]
+                            void saveEnabledTypes(next)
+                          }}
+                        />
+                        {opt.label}
+                      </label>
+                    )
+                  })}
                 </div>
               </div>
 

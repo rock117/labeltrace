@@ -155,16 +155,16 @@ export type MemberSource =
       imageCount: number
     }
 
-export type RectShape = {
-  type: 'rect'
-  classId: string
-  bbox: [number, number, number, number]
-}
-
-export type AnnotationShapes = {
-  format: 'xyxy_abs'
-  items: RectShape[]
-}
+export type {
+  AnnotationShape,
+  AnnotationShapesPayload as AnnotationShapes,
+  ClassificationShape,
+  KeypointShape,
+  MaskShape,
+  ObbShape,
+  PolygonShape,
+  RectShape,
+} from './annotationShapes'
 
 export type Annotation = {
   dataset_id: string

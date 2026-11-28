@@ -1,19 +1,15 @@
 /**
  * 标注工具注册表：只挂载「已实现 ∩ 数据集已启用」的类型。
- *
- * 切换策略（与 design D1.1 对齐）：
- * - 数据集 `enabled_annotation_types` 决定「本集允许哪些类型」
- * - 工具栏 = 已实现 ∩ 已启用；点工具栏切换当前绘制工具（activeTool）
- * - 未实现类型不注册、不展示，避免半成品入口
- * - 加新类型：在 IMPLEMENTED 注册 + 画布 Handler；不必改数据集主键
+ * 交互习惯对齐常见产品（Roboflow 等）：工具条 + 单键快捷键。
  */
+
+import { ANNOTATION_TYPE_OPTIONS } from '../lib/annotationShapes'
 
 export type AnnotationToolType =
   | 'rect'
   | 'polygon'
   | 'mask'
   | 'keypoint'
-  | 'pose'
   | 'obb'
   | 'classification'
 
@@ -21,33 +17,32 @@ export type ToolDef = {
   type: AnnotationToolType
   label: string
   implemented: boolean
-  /** 快捷键提示（可选） */
   shortcut?: string
+  hint: string
 }
 
-const IMPLEMENTED: ToolDef[] = [
-  { type: 'rect', label: '检测框', implemented: true, shortcut: 'R' },
-]
+const SHORTCUT: Partial<Record<AnnotationToolType, string>> = {
+  rect: 'B',
+  polygon: 'P',
+  mask: 'W',
+  keypoint: 'K',
+  obb: 'O',
+  classification: 'C',
+}
 
-/** 未实现类型故意不注册到 IMPLEMENTED，避免半成品入口 */
-const NOT_IMPLEMENTED = [
-  'polygon',
-  'mask',
-  'keypoint',
-  'pose',
-  'obb',
-  'classification',
-] as const
+const IMPLEMENTED: ToolDef[] = ANNOTATION_TYPE_OPTIONS.map((o) => ({
+  type: o.type,
+  label: o.label,
+  implemented: true,
+  shortcut: SHORTCUT[o.type],
+  hint: o.hint,
+}))
 
 export function resolveToolbarTools(enabledAnnotationTypes: string[]): ToolDef[] {
   const enabled = new Set(enabledAnnotationTypes)
   return IMPLEMENTED.filter((t) => t.implemented && enabled.has(t.type))
 }
 
-export function assertNoUnimplementedEntries(tools: ToolDef[]): void {
-  for (const t of tools) {
-    if ((NOT_IMPLEMENTED as readonly string[]).includes(t.type)) {
-      throw new Error(`未实现类型不得出现在工具栏: ${t.type}`)
-    }
-  }
+export function toolHint(tools: ToolDef[], active: AnnotationToolType): string {
+  return tools.find((t) => t.type === active)?.hint ?? ''
 }

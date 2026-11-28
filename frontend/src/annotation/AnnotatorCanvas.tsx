@@ -4,13 +4,17 @@ import {
   Layer,
   Image as KonvaImage,
   Rect,
+  Line,
+  Circle,
   Transformer,
   Label,
   Tag,
   Text,
+  Group,
 } from 'react-konva'
 import type Konva from 'konva'
-import type { DatasetClass, RectShape } from '../lib/types'
+import type { DatasetClass } from '../lib/types'
+import type { AnnotationShape } from '../lib/annotationShapes'
 import type { AnnotationToolType } from './toolRegistry'
 
 function resolveColor(cls: DatasetClass | undefined, fallbackIdx: number): string {
@@ -24,14 +28,15 @@ type Props = {
   imageUrl: string
   naturalWidth: number
   naturalHeight: number
-  shapes: RectShape[]
+  shapes: AnnotationShape[]
   classes: DatasetClass[]
   activeClassId: string | null
-  /** P0 仅 rect；多工具时由工具栏切换 */
   activeTool: AnnotationToolType
-  /** 版本快照浏览时为 true：不可绘制/拖拽 */
   readOnly?: boolean
-  onChange: (shapes: RectShape[]) => void
+  selectedIndex: number | null
+  onSelect: (index: number | null) => void
+  onChange: (shapes: AnnotationShape[]) => void
+  brushWidth?: number
 }
 
 export function AnnotatorCanvas({
@@ -43,19 +48,33 @@ export function AnnotatorCanvas({
   activeClassId,
   activeTool,
   readOnly = false,
+  selectedIndex,
+  onSelect,
   onChange,
+  brushWidth = 18,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [img, setImg] = useState<HTMLImageElement | null>(null)
   const [scale, setScale] = useState(1)
   const [stageSize, setStageSize] = useState({ w: 640, h: 480 })
-  const [drawing, setDrawing] = useState<{ x: number; y: number } | null>(null)
-  const [draft, setDraft] = useState<[number, number, number, number] | null>(null)
-  const [selected, setSelected] = useState<number | null>(null)
+  const [drawingRect, setDrawingRect] = useState<{
+    x: number
+    y: number
+  } | null>(null)
+  const [draftRect, setDraftRect] = useState<
+    [number, number, number, number] | null
+  >(null)
+  const [polyDraft, setPolyDraft] = useState<[number, number][]>([])
+  const [polyCursor, setPolyCursor] = useState<[number, number] | null>(null)
+  const [brushDraft, setBrushDraft] = useState<[number, number][] | null>(null)
   const trRef = useRef<Konva.Transformer>(null)
-  const shapeRefs = useRef<(Konva.Rect | null)[]>([])
+  const nodeRefs = useRef<(Konva.Node | null)[]>([])
 
   const byId = new Map(classes.map((c) => [c.id, c]))
+  const canDraw =
+    !readOnly &&
+    Boolean(activeClassId) &&
+    activeTool !== 'classification'
 
   useEffect(() => {
     const image = new window.Image()
@@ -81,85 +100,280 @@ export function AnnotatorCanvas({
   }, [naturalWidth, naturalHeight])
 
   useEffect(() => {
+    setPolyDraft([])
+    setPolyCursor(null)
+    setBrushDraft(null)
+    setDrawingRect(null)
+    setDraftRect(null)
+  }, [activeTool, imageUrl, activeClassId])
+
+  useEffect(() => {
     const tr = trRef.current
     if (!tr) return
-    if (readOnly || selected == null || !shapeRefs.current[selected]) {
+    const node =
+      selectedIndex != null ? nodeRefs.current[selectedIndex] : null
+    const shape = selectedIndex != null ? shapes[selectedIndex] : null
+    const transformable =
+      !readOnly &&
+      node &&
+      shape &&
+      (shape.type === 'rect' || shape.type === 'obb')
+    if (!transformable) {
       tr.nodes([])
       tr.getLayer()?.batchDraw()
       return
     }
-    tr.nodes([shapeRefs.current[selected]!])
+    tr.nodes([node])
+    tr.rotateEnabled(shape.type === 'obb')
     tr.getLayer()?.batchDraw()
-  }, [selected, shapes, readOnly])
+  }, [selectedIndex, shapes, readOnly])
 
-  const toImage = (sx: number, sy: number) => [sx / scale, sy / scale] as const
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement) return
+      if (e.key === 'Escape') {
+        setPolyDraft([])
+        setPolyCursor(null)
+        setBrushDraft(null)
+        setDrawingRect(null)
+        setDraftRect(null)
+        onSelect(null)
+      }
+      if (
+        (e.key === 'Enter' || e.key === 'NumpadEnter') &&
+        activeTool === 'polygon' &&
+        polyDraft.length >= 3 &&
+        activeClassId
+      ) {
+        e.preventDefault()
+        onChange([
+          ...shapes,
+          { type: 'polygon', classId: activeClassId, points: polyDraft },
+        ])
+        setPolyDraft([])
+        setPolyCursor(null)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [
+    activeTool,
+    polyDraft,
+    activeClassId,
+    shapes,
+    onChange,
+    onSelect,
+  ])
 
-  const onMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
-    if (readOnly || activeTool !== 'rect' || !activeClassId) return
-    const stage = e.target.getStage()
-    if (!stage) return
+  const toImage = (sx: number, sy: number) =>
+    [sx / scale, sy / scale] as [number, number]
+
+  const hitUI = (e: Konva.KonvaEventObject<MouseEvent>) => {
     const kind = e.target.getClassName()
-    if (
-      kind === 'Rect' ||
+    return (
       kind === 'Transformer' ||
       kind === 'Label' ||
       kind === 'Tag' ||
       kind === 'Text'
-    ) {
-      return
-    }
-    setSelected(null)
+    )
+  }
+
+  const onMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
+    if (!canDraw || !activeClassId) return
+    if (hitUI(e)) return
+    const stage = e.target.getStage()
+    if (!stage) return
     const pos = stage.getPointerPosition()
     if (!pos) return
-    setDrawing({ x: pos.x, y: pos.y })
-    setDraft([pos.x, pos.y, pos.x, pos.y])
+    const [ix, iy] = toImage(pos.x, pos.y)
+
+    if (activeTool === 'rect' || activeTool === 'obb') {
+      if (
+        e.target.getClassName() === 'Rect' ||
+        e.target.getClassName() === 'Group'
+      ) {
+        return
+      }
+      onSelect(null)
+      setDrawingRect({ x: pos.x, y: pos.y })
+      setDraftRect([pos.x, pos.y, pos.x, pos.y])
+      return
+    }
+
+    if (activeTool === 'polygon') {
+      if (e.target.getClassName() === 'Line' || e.target.getClassName() === 'Circle') {
+        return
+      }
+      onSelect(null)
+      if (e.evt.detail === 2 && polyDraft.length >= 3) {
+        onChange([
+          ...shapes,
+          { type: 'polygon', classId: activeClassId, points: polyDraft },
+        ])
+        setPolyDraft([])
+        setPolyCursor(null)
+        return
+      }
+      setPolyDraft((prev) => [...prev, [ix, iy]])
+      return
+    }
+
+    if (activeTool === 'keypoint') {
+      onSelect(null)
+      const last = shapes[shapes.length - 1]
+      if (
+        last &&
+        last.type === 'keypoint' &&
+        last.classId === activeClassId
+      ) {
+        onChange([
+          ...shapes.slice(0, -1),
+          {
+            ...last,
+            points: [...last.points, { x: ix, y: iy, v: 2 as const }],
+          },
+        ])
+      } else {
+        onChange([
+          ...shapes,
+          {
+            type: 'keypoint',
+            classId: activeClassId,
+            points: [{ x: ix, y: iy, v: 2 }],
+          },
+        ])
+      }
+      return
+    }
+
+    if (activeTool === 'mask') {
+      onSelect(null)
+      setBrushDraft([[ix, iy]])
+    }
   }
 
   const onMouseMove = (e: Konva.KonvaEventObject<MouseEvent>) => {
-    if (!drawing) return
     const pos = e.target.getStage()?.getPointerPosition()
     if (!pos) return
-    setDraft([drawing.x, drawing.y, pos.x, pos.y])
+    const [ix, iy] = toImage(pos.x, pos.y)
+
+    if (activeTool === 'polygon' && polyDraft.length > 0) {
+      setPolyCursor([ix, iy])
+    }
+    if (drawingRect) {
+      setDraftRect([drawingRect.x, drawingRect.y, pos.x, pos.y])
+    }
+    if (brushDraft) {
+      setBrushDraft((prev) => (prev ? [...prev, [ix, iy]] : prev))
+    }
+  }
+
+  const finishBrush = () => {
+    if (!brushDraft || !activeClassId) {
+      setBrushDraft(null)
+      return
+    }
+    if (brushDraft.length < 1) {
+      setBrushDraft(null)
+      return
+    }
+    onChange([
+      ...shapes,
+      {
+        type: 'mask',
+        classId: activeClassId,
+        strokes: [{ points: brushDraft, width: brushWidth }],
+      },
+    ])
+    setBrushDraft(null)
   }
 
   const onMouseUp = () => {
-    if (!drawing || !draft || !activeClassId) {
-      setDrawing(null)
-      setDraft(null)
+    if (brushDraft) {
+      finishBrush()
       return
     }
-    const [x1s, y1s, x2s, y2s] = draft
+    if (!drawingRect || !draftRect || !activeClassId) {
+      setDrawingRect(null)
+      setDraftRect(null)
+      return
+    }
+    const [x1s, y1s, x2s, y2s] = draftRect
     const [x1, y1] = toImage(Math.min(x1s, x2s), Math.min(y1s, y2s))
     const [x2, y2] = toImage(Math.max(x1s, x2s), Math.max(y1s, y2s))
-    setDrawing(null)
-    setDraft(null)
+    setDrawingRect(null)
+    setDraftRect(null)
     if (x2 - x1 < 4 || y2 - y1 < 4) return
+    if (activeTool === 'obb') {
+      onChange([
+        ...shapes,
+        {
+          type: 'obb',
+          classId: activeClassId,
+          cx: (x1 + x2) / 2,
+          cy: (y1 + y2) / 2,
+          w: x2 - x1,
+          h: y2 - y1,
+          angle: 0,
+        },
+      ])
+      return
+    }
     onChange([
       ...shapes,
       { type: 'rect', classId: activeClassId, bbox: [x1, y1, x2, y2] },
     ])
   }
 
-  const updateBox = (index: number, node: Konva.Rect) => {
+  const updateRect = (index: number, node: Konva.Rect) => {
     const sx = node.x() / scale
     const sy = node.y() / scale
     const sw = (node.width() * node.scaleX()) / scale
     const sh = (node.height() * node.scaleY()) / scale
     node.scaleX(1)
     node.scaleY(1)
-    const next = shapes.map((s, i) =>
-      i === index
-        ? {
-            ...s,
-            bbox: [sx, sy, sx + sw, sy + sh] as [number, number, number, number],
-          }
-        : s,
+    onChange(
+      shapes.map((s, i) =>
+        i === index && s.type === 'rect'
+          ? { ...s, bbox: [sx, sy, sx + sw, sy + sh] as [number, number, number, number] }
+          : s,
+      ),
     )
-    onChange(next)
+  }
+
+  const updateObb = (index: number, node: Konva.Rect) => {
+    const s = shapes[index]
+    if (!s || s.type !== 'obb') return
+    const w = (node.width() * node.scaleX()) / scale
+    const h = (node.height() * node.scaleY()) / scale
+    node.scaleX(1)
+    node.scaleY(1)
+    onChange(
+      shapes.map((item, i) =>
+        i === index && item.type === 'obb'
+          ? {
+              ...item,
+              cx: node.x() / scale,
+              cy: node.y() / scale,
+              w: Math.max(2, w),
+              h: Math.max(2, h),
+              angle: node.rotation(),
+            }
+          : item,
+      ),
+    )
   }
 
   const activeCls = activeClassId ? byId.get(activeClassId) : undefined
   const activeIdx = classes.findIndex((c) => c.id === activeClassId)
+  const activeColor = resolveColor(activeCls, activeIdx >= 0 ? activeIdx : 0)
+
+  const cursor =
+    readOnly || activeTool === 'classification'
+      ? 'default'
+      : activeTool === 'mask'
+        ? 'cell'
+        : 'crosshair'
 
   return (
     <div ref={containerRef} style={{ width: '100%', minHeight: 320 }}>
@@ -169,67 +383,260 @@ export function AnnotatorCanvas({
         onMouseDown={onMouseDown}
         onMousemove={onMouseMove}
         onMouseup={onMouseUp}
-        onMouseLeave={onMouseUp}
+        onMouseLeave={() => {
+          if (brushDraft) finishBrush()
+          else onMouseUp()
+        }}
         style={{
           background: 'var(--lt-bg-muted)',
           borderRadius: 8,
-          cursor: readOnly ? 'default' : 'crosshair',
+          cursor,
         }}
       >
         <Layer>
           {img ? (
             <KonvaImage image={img} width={stageSize.w} height={stageSize.h} />
           ) : null}
+
           {shapes.map((s, i) => {
-            if (!s.classId) return null
             const cls = byId.get(s.classId)
             const idx = classes.findIndex((c) => c.id === s.classId)
             const color = resolveColor(cls, idx >= 0 ? idx : i)
             const label = cls?.name ?? s.classId.slice(0, 8)
-            const [x1, y1, x2, y2] = s.bbox
-            return (
-              <Fragment key={i}>
-                <Rect
-                  ref={(node) => {
-                    shapeRefs.current[i] = node
-                  }}
-                  x={x1 * scale}
-                  y={y1 * scale}
-                  width={(x2 - x1) * scale}
-                  height={(y2 - y1) * scale}
-                  stroke={color}
-                  strokeWidth={2}
-                  fill={`${color}33`}
-                  draggable={!readOnly}
-                  onClick={() => !readOnly && setSelected(i)}
-                  onTap={() => !readOnly && setSelected(i)}
-                  onDragEnd={(e) => updateBox(i, e.target as Konva.Rect)}
-                  onTransformEnd={(e) => updateBox(i, e.target as Konva.Rect)}
-                />
-                <Label x={x1 * scale} y={Math.max(0, y1 * scale - 18)}>
-                  <Tag fill={color} opacity={0.9} />
-                  <Text
-                    text={label}
-                    fontSize={11}
-                    fill="#fff"
-                    padding={3}
-                    fontFamily="ui-sans-serif, system-ui"
+            const selected = selectedIndex === i
+
+            if (s.type === 'rect') {
+              const [x1, y1, x2, y2] = s.bbox
+              return (
+                <Fragment key={i}>
+                  <Rect
+                    ref={(node) => {
+                      nodeRefs.current[i] = node
+                    }}
+                    x={x1 * scale}
+                    y={y1 * scale}
+                    width={(x2 - x1) * scale}
+                    height={(y2 - y1) * scale}
+                    stroke={color}
+                    strokeWidth={selected ? 3 : 2}
+                    fill={`${color}33`}
+                    draggable={!readOnly}
+                    onClick={(e) => {
+                      e.cancelBubble = true
+                      if (!readOnly) onSelect(i)
+                    }}
+                    onTap={(e) => {
+                      e.cancelBubble = true
+                      if (!readOnly) onSelect(i)
+                    }}
+                    onDragEnd={(e) => updateRect(i, e.target as Konva.Rect)}
+                    onTransformEnd={(e) => updateRect(i, e.target as Konva.Rect)}
                   />
-                </Label>
-              </Fragment>
-            )
+                  <Label x={x1 * scale} y={Math.max(0, y1 * scale - 18)}>
+                    <Tag fill={color} opacity={0.9} />
+                    <Text
+                      text={label}
+                      fontSize={11}
+                      fill="#fff"
+                      padding={3}
+                      fontFamily="ui-sans-serif, system-ui"
+                    />
+                  </Label>
+                </Fragment>
+              )
+            }
+
+            if (s.type === 'polygon') {
+              const flat = s.points.flatMap(([x, y]) => [x * scale, y * scale])
+              return (
+                <Fragment key={i}>
+                  <Line
+                    ref={(node) => {
+                      nodeRefs.current[i] = node
+                    }}
+                    points={flat}
+                    closed
+                    stroke={color}
+                    strokeWidth={selected ? 3 : 2}
+                    fill={`${color}44`}
+                    onClick={(e) => {
+                      e.cancelBubble = true
+                      if (!readOnly) onSelect(i)
+                    }}
+                  />
+                  <Label
+                    x={s.points[0][0] * scale}
+                    y={Math.max(0, s.points[0][1] * scale - 18)}
+                  >
+                    <Tag fill={color} opacity={0.9} />
+                    <Text text={label} fontSize={11} fill="#fff" padding={3} />
+                  </Label>
+                </Fragment>
+              )
+            }
+
+            if (s.type === 'obb') {
+              return (
+                <Fragment key={i}>
+                  <Rect
+                    ref={(node) => {
+                      nodeRefs.current[i] = node
+                    }}
+                    x={s.cx * scale}
+                    y={s.cy * scale}
+                    width={s.w * scale}
+                    height={s.h * scale}
+                    offsetX={(s.w * scale) / 2}
+                    offsetY={(s.h * scale) / 2}
+                    rotation={s.angle}
+                    stroke={color}
+                    strokeWidth={selected ? 3 : 2}
+                    fill={`${color}33`}
+                    draggable={!readOnly}
+                    onClick={(e) => {
+                      e.cancelBubble = true
+                      if (!readOnly) onSelect(i)
+                    }}
+                    onDragEnd={(e) => updateObb(i, e.target as Konva.Rect)}
+                    onTransformEnd={(e) => updateObb(i, e.target as Konva.Rect)}
+                  />
+                  <Label
+                    x={s.cx * scale - 20}
+                    y={Math.max(0, s.cy * scale - s.h * scale * 0.5 - 18)}
+                  >
+                    <Tag fill={color} opacity={0.9} />
+                    <Text text={label} fontSize={11} fill="#fff" padding={3} />
+                  </Label>
+                </Fragment>
+              )
+            }
+
+            if (s.type === 'keypoint') {
+              return (
+                <Group
+                  key={i}
+                  ref={(node) => {
+                    nodeRefs.current[i] = node
+                  }}
+                  onClick={(e) => {
+                    e.cancelBubble = true
+                    if (!readOnly) onSelect(i)
+                  }}
+                >
+                  {s.points.length > 1 ? (
+                    <Line
+                      points={s.points.flatMap((p) => [
+                        p.x * scale,
+                        p.y * scale,
+                      ])}
+                      stroke={color}
+                      strokeWidth={1.5}
+                      dash={[4, 4]}
+                    />
+                  ) : null}
+                  {s.points.map((p, pi) => (
+                    <Circle
+                      key={pi}
+                      x={p.x * scale}
+                      y={p.y * scale}
+                      radius={selected ? 6 : 5}
+                      fill={color}
+                      stroke="#fff"
+                      strokeWidth={1}
+                    />
+                  ))}
+                  <Label
+                    x={s.points[0].x * scale}
+                    y={Math.max(0, s.points[0].y * scale - 18)}
+                  >
+                    <Tag fill={color} opacity={0.9} />
+                    <Text text={label} fontSize={11} fill="#fff" padding={3} />
+                  </Label>
+                </Group>
+              )
+            }
+
+            if (s.type === 'mask') {
+              return (
+                <Group
+                  key={i}
+                  ref={(node) => {
+                    nodeRefs.current[i] = node
+                  }}
+                  onClick={(e) => {
+                    e.cancelBubble = true
+                    if (!readOnly) onSelect(i)
+                  }}
+                >
+                  {s.strokes.map((st, si) => (
+                    <Line
+                      key={si}
+                      points={st.points.flatMap(([x, y]) => [
+                        x * scale,
+                        y * scale,
+                      ])}
+                      stroke={color}
+                      strokeWidth={st.width * scale}
+                      lineCap="round"
+                      lineJoin="round"
+                      opacity={selected ? 0.85 : 0.65}
+                      tension={0.2}
+                    />
+                  ))}
+                </Group>
+              )
+            }
+
+            nodeRefs.current[i] = null
+            return null
           })}
-          {draft ? (
+
+          {polyDraft.length > 0 ? (
+            <Line
+              points={[
+                ...polyDraft.flatMap(([x, y]) => [x * scale, y * scale]),
+                ...(polyCursor
+                  ? [polyCursor[0] * scale, polyCursor[1] * scale]
+                  : []),
+              ]}
+              stroke={activeColor}
+              strokeWidth={1.5}
+              dash={[6, 4]}
+            />
+          ) : null}
+          {polyDraft.map(([x, y], i) => (
+            <Circle
+              key={`pd-${i}`}
+              x={x * scale}
+              y={y * scale}
+              radius={4}
+              fill={activeColor}
+            />
+          ))}
+
+          {brushDraft && brushDraft.length > 0 ? (
+            <Line
+              points={brushDraft.flatMap(([x, y]) => [x * scale, y * scale])}
+              stroke={activeColor}
+              strokeWidth={brushWidth * scale}
+              lineCap="round"
+              lineJoin="round"
+              opacity={0.7}
+            />
+          ) : null}
+
+          {draftRect ? (
             <Rect
-              x={Math.min(draft[0], draft[2])}
-              y={Math.min(draft[1], draft[3])}
-              width={Math.abs(draft[2] - draft[0])}
-              height={Math.abs(draft[3] - draft[1])}
-              stroke={resolveColor(activeCls, activeIdx >= 0 ? activeIdx : 0)}
+              x={Math.min(draftRect[0], draftRect[2])}
+              y={Math.min(draftRect[1], draftRect[3])}
+              width={Math.abs(draftRect[2] - draftRect[0])}
+              height={Math.abs(draftRect[3] - draftRect[1])}
+              stroke={activeColor}
               dash={[4, 4]}
               strokeWidth={1.5}
             />
           ) : null}
+
           {!readOnly ? (
             <Transformer
               ref={trRef}

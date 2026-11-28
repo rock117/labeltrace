@@ -9,13 +9,19 @@ import type {
   DatasetAsset,
   DatasetClass,
   ProjectMember,
-  RectShape,
   Version,
   VersionManifest,
   VersionManifestEntry,
 } from '../lib/types'
 import {
+  parseAnnotationItems,
+  shapeSummary,
+  shapesKey,
+  type AnnotationShape,
+} from '../lib/annotationShapes'
+import {
   resolveToolbarTools,
+  toolHint,
   type AnnotationToolType,
 } from '../annotation/toolRegistry'
 import { AnnotatorCanvas, classColorCss } from '../annotation/AnnotatorCanvas'
@@ -35,25 +41,6 @@ import {
 
 type MemberFilter = 'all' | 'none' | 'draft' | 'submitted'
 type MemberAnnStatus = 'submitted' | 'draft' | 'none'
-
-function rectItems(shapes: { items?: unknown[] } | null | undefined): RectShape[] {
-  const out: RectShape[] = []
-  for (const raw of shapes?.items ?? []) {
-    if (!raw || typeof raw !== 'object') continue
-    const s = raw as Record<string, unknown>
-    if (s.type !== 'rect') continue
-    const classId = typeof s.classId === 'string' ? s.classId : null
-    if (!classId) continue
-    const bbox = s.bbox
-    if (!Array.isArray(bbox) || bbox.length < 4) continue
-    out.push({
-      type: 'rect',
-      classId,
-      bbox: [Number(bbox[0]), Number(bbox[1]), Number(bbox[2]), Number(bbox[3])],
-    })
-  }
-  return out
-}
 
 function normalizeClasses(raw: unknown): DatasetClass[] {
   if (!Array.isArray(raw)) return []
@@ -76,10 +63,6 @@ function normalizeClasses(raw: unknown): DatasetClass[] {
       return null
     })
     .filter((c): c is DatasetClass => c != null)
-}
-
-function shapesKey(items: RectShape[]) {
-  return JSON.stringify(items)
 }
 
 function statusLabel(s: MemberAnnStatus, pending = false): string {
@@ -111,10 +94,11 @@ function AnnotateInner() {
   const [index, setIndex] = useState(0)
   const [asset, setAsset] = useState<Asset | null>(null)
   const [lineage, setLineage] = useState<AssetLineage | null>(null)
-  const [shapes, setShapes] = useState<RectShape[]>([])
+  const [shapes, setShapes] = useState<AnnotationShape[]>([])
   const [imageUrl, setImageUrl] = useState<string | null>(null)
   const [activeClassId, setActiveClassId] = useState<string | null>(null)
   const [activeTool, setActiveTool] = useState<AnnotationToolType>('rect')
+  const [selectedShape, setSelectedShape] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -127,8 +111,9 @@ function AnnotateInner() {
   const [memberScope, setMemberScope] = useState<'mine' | 'all'>('all')
   const stripRef = useRef<HTMLDivElement>(null)
   const baselineKeyRef = useRef('')
-  const shapesRef = useRef<RectShape[]>([])
+  const shapesRef = useRef<AnnotationShape[]>([])
   const dirtyRef = useRef(false)
+  const selectedShapeRef = useRef<number | null>(null)
   const datasetRef = useRef<Dataset | null>(null)
   const assetRef = useRef<Asset | null>(null)
   const readOnlyRef = useRef(readOnly)
@@ -140,6 +125,9 @@ function AnnotateInner() {
     dirtyRef.current = dirty
   }, [dirty])
   useEffect(() => {
+    selectedShapeRef.current = selectedShape
+  }, [selectedShape])
+  useEffect(() => {
     datasetRef.current = dataset
   }, [dataset])
   useEffect(() => {
@@ -149,12 +137,32 @@ function AnnotateInner() {
     readOnlyRef.current = readOnly
   }, [readOnly])
 
-  const markShapes = useCallback((next: RectShape[]) => {
+  const markShapes = useCallback((next: AnnotationShape[]) => {
     setShapes(next)
     const dirtyNext = shapesKey(next) !== baselineKeyRef.current
     setDirty(dirtyNext)
     dirtyRef.current = dirtyNext
   }, [])
+
+  const toggleClassification = useCallback(
+    (classId: string) => {
+      if (readOnly || activeTool !== 'classification') {
+        setActiveClassId(classId)
+        return
+      }
+      setActiveClassId(classId)
+      const cur = shapesRef.current
+      const idx = cur.findIndex(
+        (s) => s.type === 'classification' && s.classId === classId,
+      )
+      if (idx >= 0) {
+        markShapes(cur.filter((_, i) => i !== idx))
+      } else {
+        markShapes([...cur, { type: 'classification', classId }])
+      }
+    },
+    [readOnly, activeTool, markShapes],
+  )
 
   const applyVersionToWorkspace = async () => {
     if (!versionParam || !version) return
@@ -345,12 +353,13 @@ function AnnotateInner() {
           api<Asset>(`/v1/assets/${member.asset_id}`),
           api<AssetLineage>(`/v1/assets/${member.asset_id}/lineage`),
         ])
-        const loaded = rectItems(entry?.shapes)
+        const loaded = parseAnnotationItems(entry?.shapes?.items)
         setAsset(a)
         setLineage(lin)
         setShapes(loaded)
         shapesRef.current = loaded
         baselineKeyRef.current = shapesKey(loaded)
+        setSelectedShape(null)
         setDirty(false)
         dirtyRef.current = false
         await loadContent(member.asset_id)
@@ -365,7 +374,7 @@ function AnnotateInner() {
         ),
         api<AssetLineage>(`/v1/assets/${member.asset_id}/lineage`),
       ])
-      const loaded = rectItems(ann.shapes)
+      const loaded = parseAnnotationItems(ann.shapes?.items)
       // 与库中真实标注对齐：列表状态可能滞后；有记录/有框时同步到 members
       const syncedStatus: 'draft' | 'submitted' | null =
         ann.updated_at != null || loaded.length > 0
@@ -385,6 +394,7 @@ function AnnotateInner() {
       setShapes(loaded)
       shapesRef.current = loaded
       baselineKeyRef.current = shapesKey(loaded)
+      setSelectedShape(null)
       setDirty(false)
       dirtyRef.current = false
       await loadContent(member.asset_id)
@@ -524,7 +534,7 @@ function AnnotateInner() {
 
   const save = async (
     status: 'draft' | 'submitted' = 'draft',
-    opts?: { silent?: boolean; items?: RectShape[] },
+    opts?: { silent?: boolean; items?: AnnotationShape[] },
   ): Promise<boolean> => {
     if (readOnly || !dataset || !asset) return false
     const items = opts?.items ?? shapes
@@ -788,16 +798,39 @@ function AnnotateInner() {
         void go(1)
       }
       if (readOnly) return
+      const toolKey = e.key.length === 1 ? e.key.toLowerCase() : ''
+      const toolMap: Record<string, AnnotationToolType> = {
+        b: 'rect',
+        p: 'polygon',
+        w: 'mask',
+        k: 'keypoint',
+        o: 'obb',
+        c: 'classification',
+      }
+      if (toolMap[toolKey] && tools.some((t) => t.type === toolMap[toolKey])) {
+        setActiveTool(toolMap[toolKey])
+        return
+      }
       if (e.key >= '1' && e.key <= '9') {
         const cls = Number(e.key) - 1
-        if (cls >= 0 && cls < classes.length) setActiveClassId(classes[cls].id)
+        if (cls >= 0 && cls < classes.length) {
+          const id = classes[cls].id
+          if (activeTool === 'classification') toggleClassification(id)
+          else setActiveClassId(id)
+        }
       }
       if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault()
         void save('draft')
       }
       if (e.key === 'Backspace' || e.key === 'Delete') {
-        markShapes(shapesRef.current.slice(0, -1))
+        const sel = selectedShapeRef.current
+        if (sel != null) {
+          markShapes(shapesRef.current.filter((_, i) => i !== sel))
+          setSelectedShape(null)
+        } else {
+          markShapes(shapesRef.current.slice(0, -1))
+        }
       }
     }
     window.addEventListener('keydown', onKey)
@@ -907,7 +940,9 @@ function AnnotateInner() {
               ? ` · 未标注 ${progress.unlabeled}`
               : ''}
             {` / 共 ${progress.total}`}
-            {tools.length === 0 ? ' · 无可启用工具' : ' · 检测框'}
+            {tools.length === 0
+              ? ' · 无可启用工具'
+              : ` · ${tools.map((t) => t.label).join('/')}`}
             {!readOnly
               ? dirty
                 ? ' · 已画框（编辑中）· 点下一张即提交本张'
@@ -1116,42 +1151,64 @@ function AnnotateInner() {
 
         <div style={{ minWidth: 0 }}>
           {!readOnly && tools.length > 0 ? (
-            <div
-              style={{
-                display: 'flex',
-                gap: 6,
-                flexWrap: 'wrap',
-                marginBottom: 8,
-                alignItems: 'center',
-              }}
-            >
-              <span className="lt-muted" style={{ marginRight: 4 }}>
-                工具
-              </span>
-              {tools.map((t) => (
-                <button
-                  key={t.type}
-                  type="button"
-                  className="lt-btn"
-                  style={{
-                    background:
-                      activeTool === t.type
-                        ? 'var(--lt-accent-soft)'
-                        : undefined,
-                    color:
-                      activeTool === t.type ? 'var(--lt-accent)' : undefined,
-                  }}
-                  onClick={() => setActiveTool(t.type)}
-                  title={t.shortcut ? `快捷键 ${t.shortcut}` : undefined}
-                >
-                  {t.label}
-                  {t.shortcut ? (
-                    <span className="mono" style={{ opacity: 0.55, marginLeft: 4 }}>
-                      {t.shortcut}
-                    </span>
-                  ) : null}
-                </button>
-              ))}
+            <div style={{ marginBottom: 8 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 6,
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                }}
+              >
+                <span className="lt-muted" style={{ marginRight: 4 }}>
+                  工具
+                </span>
+                {tools.map((t) => (
+                  <button
+                    key={t.type}
+                    type="button"
+                    className="lt-btn"
+                    style={{
+                      background:
+                        activeTool === t.type
+                          ? 'var(--lt-accent-soft)'
+                          : undefined,
+                      color:
+                        activeTool === t.type ? 'var(--lt-accent)' : undefined,
+                    }}
+                    onClick={() => setActiveTool(t.type)}
+                    title={
+                      t.shortcut
+                        ? `${t.hint}（${t.shortcut}）`
+                        : t.hint
+                    }
+                  >
+                    {t.label}
+                    {t.shortcut ? (
+                      <span
+                        className="mono"
+                        style={{ opacity: 0.55, marginLeft: 4 }}
+                      >
+                        {t.shortcut}
+                      </span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+              <p
+                style={{
+                  margin: '6px 0 0',
+                  fontSize: 12,
+                  color: 'var(--lt-fg-muted)',
+                }}
+              >
+                {toolHint(tools, activeTool)}
+                {activeTool === 'polygon'
+                  ? ' · Esc 取消'
+                  : activeTool === 'classification'
+                    ? ' · 再点一次取消标签'
+                    : ' · Del 删选中 / 末条'}
+              </p>
             </div>
           ) : null}
           {imageUrl && asset ? (
@@ -1164,6 +1221,8 @@ function AnnotateInner() {
               activeClassId={activeClassId}
               activeTool={activeTool}
               readOnly={readOnly}
+              selectedIndex={selectedShape}
+              onSelect={setSelectedShape}
               onChange={markShapes}
             />
           ) : (
@@ -1172,35 +1231,53 @@ function AnnotateInner() {
         </div>
 
         <aside className="lt-panel" style={{ padding: '0.85rem' }}>
-          <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.9rem' }}>类别</h3>
+          <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.9rem' }}>
+            {activeTool === 'classification' ? '整图标签' : '类别'}
+          </h3>
           {classes.length === 0 ? (
             <p style={{ margin: 0, color: 'var(--lt-fg-subtle)', fontSize: 13 }}>
               本数据集还没启用类别。请先在 YOLO类别页创建；已有类别可在数据集页重新勾选。
             </p>
           ) : (
             <div style={{ display: 'grid', gap: 4 }}>
-              {classes.map((c, i) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  className="lt-btn"
-                  disabled={readOnly}
-                  style={{
-                    justifyContent: 'flex-start',
-                    borderLeft: `3px solid ${classColorCss(c, i)}`,
-                    background:
-                      !readOnly && activeClassId === c.id
+              {classes.map((c, i) => {
+                const tagged = shapes.some(
+                  (s) =>
+                    s.type === 'classification' && s.classId === c.id,
+                )
+                const active =
+                  activeTool === 'classification'
+                    ? tagged
+                    : activeClassId === c.id
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className="lt-btn"
+                    disabled={readOnly}
+                    style={{
+                      justifyContent: 'flex-start',
+                      borderLeft: `3px solid ${classColorCss(c, i)}`,
+                      background: active
                         ? 'var(--lt-accent-soft)'
                         : undefined,
-                  }}
-                  onClick={() => !readOnly && setActiveClassId(c.id)}
-                >
-                  <span className="mono" style={{ opacity: 0.7 }}>
-                    {i + 1}
-                  </span>{' '}
-                  {c.name}
-                </button>
-              ))}
+                    }}
+                    onClick={() =>
+                      !readOnly && toggleClassification(c.id)
+                    }
+                  >
+                    <span className="mono" style={{ opacity: 0.7 }}>
+                      {i + 1}
+                    </span>{' '}
+                    {c.name}
+                    {activeTool === 'classification' && tagged ? (
+                      <span style={{ marginLeft: 'auto', fontSize: 12 }}>
+                        ✓
+                      </span>
+                    ) : null}
+                  </button>
+                )
+              })}
             </div>
           )}
 
@@ -1224,43 +1301,70 @@ function AnnotateInner() {
           <h3 style={{ margin: '1rem 0 0.5rem', fontSize: '0.9rem' }}>标注列表</h3>
           {shapes.length === 0 ? (
             <p style={{ margin: 0, color: 'var(--lt-fg-subtle)', fontSize: 13 }}>
-              {readOnly ? '该帧在快照中无框' : '在画布拖拽绘制检测框'}
+              {readOnly
+                ? '该帧在快照中无标注'
+                : '选择工具后在画布标注；分类工具点右侧类别'}
             </p>
           ) : (
-            <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: 13 }}>
+            <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: 13 }}>
               {shapes.map((s, i) => {
-                if (!s.classId) return null
                 const cls = classes.find((c) => c.id === s.classId)
                 const idx = classes.findIndex((c) => c.id === s.classId)
+                const on = selectedShape === i
                 return (
                   <li key={i}>
-                    <span
+                    <button
+                      type="button"
+                      className="lt-btn"
                       style={{
-                        display: 'inline-block',
-                        width: 8,
-                        height: 8,
-                        borderRadius: 2,
-                        background: classColorCss(cls, idx >= 0 ? idx : i),
-                        marginRight: 6,
+                        width: '100%',
+                        justifyContent: 'flex-start',
+                        marginBottom: 4,
+                        background: on
+                          ? 'var(--lt-accent-soft)'
+                          : undefined,
                       }}
-                    />
-                    {cls?.name ?? s.classId.slice(0, 8)} · [
-                    {s.bbox.map((n) => Math.round(n)).join(', ')}]
+                      onClick={() => setSelectedShape(i)}
+                    >
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          width: 8,
+                          height: 8,
+                          borderRadius: 2,
+                          background: classColorCss(cls, idx >= 0 ? idx : i),
+                          marginRight: 6,
+                          flexShrink: 0,
+                        }}
+                      />
+                      <span style={{ textAlign: 'left' }}>
+                        {cls?.name ?? s.classId.slice(0, 8)} ·{' '}
+                        {shapeSummary(s)}
+                      </span>
+                    </button>
                   </li>
                 )
               })}
             </ul>
           )}
           {!readOnly ? (
-            <button
-              type="button"
-              className="lt-btn lt-btn-danger"
-              style={{ marginTop: 8 }}
-              disabled={shapes.length === 0}
-              onClick={() => markShapes(shapes.slice(0, -1))}
-            >
-              撤销上一框
-            </button>
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <button
+                type="button"
+                className="lt-btn lt-btn-danger"
+                disabled={shapes.length === 0}
+                onClick={() => {
+                  if (selectedShape != null) {
+                    markShapes(shapes.filter((_, i) => i !== selectedShape))
+                    setSelectedShape(null)
+                  } else {
+                    markShapes(shapes.slice(0, -1))
+                  }
+                }}
+              >
+                {selectedShape != null ? '删除选中' : '撤销上一条'}
+              </button>
+            </div>
           ) : null}
         </aside>
       </div>
