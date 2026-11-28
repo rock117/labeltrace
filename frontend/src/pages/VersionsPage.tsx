@@ -22,11 +22,12 @@ type JobStatus = {
 }
 
 function VersionsInner() {
-  const projectId = useAppStore((s) => s.projectId)
+  const projectId = useAppStore((s) => s.projectId)!
   const [params, setParams] = useSearchParams()
   const datasetId =
     params.get('dataset') || getStoredDatasetId()
 
+  const [datasets, setDatasets] = useState<Dataset[]>([])
   const [dataset, setDataset] = useState<Dataset | null>(null)
   const [versions, setVersions] = useState<Version[]>([])
   const [name, setName] = useState('')
@@ -36,10 +37,26 @@ function VersionsInner() {
   const [splitTest, setSplitTest] = useState(0.1)
   const [splitSeed, setSplitSeed] = useState(42)
   const [loading, setLoading] = useState(true)
+  const [listLoading, setListLoading] = useState(true)
   const { is, run } = useActionPending()
   const [exportingId, setExportingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+
+  const selectDataset = useCallback(
+    (id: string) => {
+      if (!id || id === datasetId) return
+      setName('')
+      setNote('')
+      setError(null)
+      setMessage(null)
+      setDataset(null)
+      setVersions([])
+      setLoading(true)
+      setParams({ dataset: id }, { replace: true })
+    },
+    [datasetId, setParams],
+  )
 
   const splitSum = Math.round((splitTrain + splitVal + splitTest) * 1000) / 1000
   const splitOk = Math.abs(splitSum - 1) < 0.001
@@ -169,17 +186,23 @@ function VersionsInner() {
         api<Dataset>(`/v1/datasets/${id}`),
         api<Version[]>(`/v1/datasets/${id}/versions`),
       ])
-      if (projectId && ds.project_id !== projectId) {
+      if (ds.project_id !== projectId) {
         setStoredDataset(null, { projectId })
         setDataset(null)
         setVersions([])
         setParams({}, { replace: true })
-        setError('该数据集不属于当前项目，请从数据集页重新打开')
+        setError('该数据集不属于当前项目，请重新选择')
         return
       }
       setDataset(ds)
       setVersions(vers)
       setStoredDataset({ id: ds.id, name: ds.name }, { projectId })
+      setDatasets((prev) => {
+        if (prev.some((d) => d.id === ds.id)) {
+          return prev.map((d) => (d.id === ds.id ? ds : d))
+        }
+        return [ds, ...prev]
+      })
     } catch (e) {
       setError(formatError(e))
       setDataset(null)
@@ -188,6 +211,40 @@ function VersionsInner() {
       setLoading(false)
     }
   }, [projectId, setParams])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      setListLoading(true)
+      try {
+        const list = await api<Dataset[]>(`/v1/projects/${projectId}/datasets`)
+        if (cancelled) return
+        setDatasets(list)
+        if (!datasetId && list[0]) {
+          setParams({ dataset: list[0].id }, { replace: true })
+        } else if (
+          datasetId &&
+          list.length > 0 &&
+          !list.some((d) => d.id === datasetId)
+        ) {
+          setStoredDataset(null, { projectId })
+          setParams(
+            list[0] ? { dataset: list[0].id } : {},
+            { replace: true },
+          )
+        }
+      } catch (e) {
+        if (!cancelled) setError(formatError(e))
+      } finally {
+        if (!cancelled) setListLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // datasetId 变化时不必反复拉列表
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
 
   useEffect(() => {
     if (datasetId) void reload(datasetId)
@@ -229,11 +286,13 @@ function VersionsInner() {
     })
   }
 
-  if (!datasetId) {
+  if (listLoading && !datasetId) return <LoadingBlock />
+
+  if (!listLoading && datasets.length === 0) {
     return (
       <StateBlock
-        title="未选择数据集"
-        description="在数据集页打开后再发版。"
+        title="尚无数据集"
+        description="先创建数据集并完成标注，再来发版与导出。"
         action={
           <Link to="/datasets" className="lt-btn lt-btn-primary">
             前往数据集
@@ -243,15 +302,78 @@ function VersionsInner() {
     )
   }
 
-  if (loading) return <LoadingBlock />
+  if (!datasetId) {
+    return (
+      <StateBlock
+        title="未选择数据集"
+        description="在下方选择要发版或导出的数据集。"
+        action={
+          datasets.length > 0 ? (
+            <select
+              className="lt-select"
+              value=""
+              onChange={(e) => {
+                if (e.target.value) selectDataset(e.target.value)
+              }}
+            >
+              <option value="">选择数据集…</option>
+              {datasets.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <Link to="/datasets" className="lt-btn lt-btn-primary">
+              前往数据集
+            </Link>
+          )
+        }
+      />
+    )
+  }
+
+  if (loading && !dataset) return <LoadingBlock />
 
   return (
     <div>
       <div className="lt-page-head">
         <div>
           <h1>版本</h1>
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: 8,
+              margin: '0.35rem 0 0.5rem',
+            }}
+          >
+            <span style={{ fontSize: 13, color: 'var(--lt-fg-muted)' }}>
+              数据集
+            </span>
+            <select
+              className="lt-select"
+              value={datasetId}
+              disabled={listLoading || datasets.length === 0}
+              onChange={(e) => selectDataset(e.target.value)}
+              style={{ minWidth: 180 }}
+              aria-label="选择数据集"
+            >
+              {datasets.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+              {datasetId && !datasets.some((d) => d.id === datasetId) ? (
+                <option value={datasetId}>
+                  {dataset?.name ?? '（当前）'}
+                </option>
+              ) : null}
+            </select>
+          </div>
           <p>
-            {dataset?.name ?? '数据集'} · 全部成员须已「提交」标注后方可发版。发版时才给仍启用的类别编 0、1、2…（按它们加入本数据集的先后；导入包沿用包内顺序），并按比例随机划分 train/val/test。导出使用该版本冻结的编号。
+            全部成员须已「提交」标注后方可发版。发版时才给仍启用的类别编 0、1、2…（按它们加入本数据集的先后；导入包沿用包内顺序），并按比例随机划分 train/val/test。导出使用该版本冻结的编号。
           </p>
         </div>
         <Link to={`/annotate?dataset=${datasetId}`} className="lt-btn">
