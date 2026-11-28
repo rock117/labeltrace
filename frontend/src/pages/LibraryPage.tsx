@@ -17,9 +17,17 @@ import { AuthVideoThumb } from '../components/AuthVideoThumb'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
 import { appPrompt } from '../store/dialogStore'
+import {
+  getStoredBrowseKind,
+  getStoredExtractJobId,
+  getStoredFolderId,
+  getStoredLibraryVideo,
+  setStoredBrowseKind,
+  setStoredExtractJobId,
+  setStoredFolder,
+  setStoredLibraryVideo,
+} from '../lib/workspaceStorage'
 
-const EXTRACT_KEY = 'labeltrace.lastExtractJobId'
-const FOLDER_KEY = 'labeltrace.folderId'
 const PAGE_SIZE = 60
 
 type BrowseKind = 'video' | 'image'
@@ -29,7 +37,7 @@ function LibraryInner() {
   const [trail, setTrail] = useState<Folder[]>([])
   const [childFolders, setChildFolders] = useState<Folder[]>([])
   const [folder, setFolder] = useState<Folder | null>(null)
-  const [browseKind, setBrowseKind] = useState<BrowseKind>('video')
+  const [browseKind, setBrowseKind] = useState<BrowseKind>(getStoredBrowseKind())
   const [assets, setAssets] = useState<Asset[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
@@ -78,9 +86,18 @@ function LibraryInner() {
     return jobs
   }, [])
 
-  const openExtractJob = useCallback(async (job: ExtractJob) => {
+  const openExtractJob = useCallback(async (job: ExtractJob, videoId?: string) => {
+    if (job.project_id && job.project_id !== projectId) {
+      setStoredExtractJobId(null, { projectId, videoId })
+      setExtractJob(null)
+      setFrames([])
+      return
+    }
     setExtractJob(job)
-    localStorage.setItem(EXTRACT_KEY, job.id)
+    setStoredExtractJobId(job.id, {
+      projectId,
+      videoId: videoId || selectedVideo?.id || undefined,
+    })
     setSelected(new Set())
     if (job.status === 'succeeded') {
       const fr = await api<FrameCandidate[]>(`/v1/extract-jobs/${job.id}/frames`)
@@ -88,21 +105,45 @@ function LibraryInner() {
     } else {
       setFrames([])
     }
-  }, [])
+  }, [projectId, selectedVideo?.id])
 
   const selectVideo = useCallback(
     async (video: Asset) => {
+      if (video.project_id && video.project_id !== projectId) {
+        setError('该素材不属于当前项目')
+        return
+      }
       setSelectedVideo(video)
       setSelectedImage(null)
       setFrames([])
       setSelected(new Set())
+      const prevVideo = getStoredLibraryVideo()
+      const savedJobId =
+        prevVideo && (prevVideo.id === video.id || !prevVideo.id)
+          ? prevVideo.extractJobId
+          : null
+      setStoredLibraryVideo(
+        {
+          id: video.id,
+          name: video.filename,
+          extractJobId: savedJobId,
+        },
+        { projectId },
+      )
       try {
         const jobs = await loadVideoJobs(video.id)
-        const savedId = localStorage.getItem(EXTRACT_KEY)
         const preferred =
-          (savedId && jobs.find((j) => j.id === savedId)) || jobs[0] || null
-        if (preferred) await openExtractJob(preferred)
+          (savedJobId &&
+            jobs.find(
+              (j) =>
+                j.id === savedJobId &&
+                (!j.project_id || j.project_id === projectId),
+            )) ||
+          jobs[0] ||
+          null
+        if (preferred) await openExtractJob(preferred, video.id)
         else {
+          setStoredExtractJobId(null, { projectId, videoId: video.id })
           setExtractJob(null)
           setVideoJobs(jobs)
         }
@@ -110,11 +151,20 @@ function LibraryInner() {
         setError(formatError(e))
       }
     },
-    [loadVideoJobs, openExtractJob],
+    [loadVideoJobs, openExtractJob, projectId],
   )
 
   const enterFolder = useCallback(
-    async (next: Folder | null, nextTrail: Folder[]) => {
+    async (
+      next: Folder | null,
+      nextTrail: Folder[],
+      opts?: { restoreVideo?: boolean },
+    ) => {
+      if (next && next.project_id !== projectId) {
+        setStoredFolder(null, { projectId })
+        setError('该目录不属于当前项目')
+        return
+      }
       setFolder(next)
       setTrail(nextTrail)
       setSelectedVideo(null)
@@ -126,18 +176,37 @@ function LibraryInner() {
       setFrames([])
       setVideoJobs([])
       if (next) {
-        localStorage.setItem(FOLDER_KEY, next.id)
+        setStoredFolder({ id: next.id, name: next.name }, { projectId })
         const [kids] = await Promise.all([
           loadChildren(next.id),
           loadAssetsPage(next.id, browseKind, 0),
         ])
         setChildFolders(kids)
+        if (opts?.restoreVideo) {
+          const hint = getStoredLibraryVideo()
+          if (hint?.id) {
+            try {
+              const video = await api<Asset>(`/v1/assets/${hint.id}`)
+              if (
+                video.project_id === projectId &&
+                video.folder_id === next.id &&
+                video.media_kind === 'video'
+              ) {
+                await selectVideo(video)
+                return
+              }
+            } catch {
+              /* 失效则清空 */
+            }
+            setStoredLibraryVideo(null, { projectId })
+          }
+        }
       } else {
-        localStorage.removeItem(FOLDER_KEY)
+        setStoredFolder(null, { projectId })
         setChildFolders(await loadChildren(null))
       }
     },
-    [browseKind, loadAssetsPage, loadChildren],
+    [browseKind, loadAssetsPage, loadChildren, projectId, selectVideo],
   )
 
   useEffect(() => {
@@ -169,17 +238,17 @@ function LibraryInner() {
           /* 数据集列表失败不阻塞素材库 */
         }
 
-        const savedId = localStorage.getItem(FOLDER_KEY)
+        const savedId = getStoredFolderId()
         if (savedId) {
           try {
             const f = await api<Folder>(`/v1/folders/${savedId}`)
             if (!cancelled && f.project_id === projectId) {
-              await enterFolder(f, [f])
-            } else if (f.project_id !== projectId) {
-              localStorage.removeItem(FOLDER_KEY)
+              await enterFolder(f, [f], { restoreVideo: true })
+            } else {
+              setStoredFolder(null, { projectId })
             }
           } catch {
-            localStorage.removeItem(FOLDER_KEY)
+            setStoredFolder(null, { projectId })
           }
         }
       } catch (e) {
@@ -195,13 +264,15 @@ function LibraryInner() {
   }, [projectId])
 
   const switchBrowseKind = async (kind: BrowseKind) => {
-    if (kind === browseKind || !folder) {
-      setBrowseKind(kind)
-      return
-    }
     setBrowseKind(kind)
+    setStoredBrowseKind(kind, { projectId })
+    if (kind === browseKind || !folder) return
     setSelectedVideo(null)
     setSelectedImage(null)
+    setExtractJob(null)
+    setFrames([])
+    setVideoJobs([])
+    if (kind !== 'video') setStoredLibraryVideo(null, { projectId })
     setBusy(true)
     try {
       await loadAssetsPage(folder.id, kind, 0)
@@ -338,11 +409,18 @@ function LibraryInner() {
           nImg += 1
         }
       }
-      const prefer: BrowseKind = nVid > 0 && nImg === 0 ? 'video' : nImg > 0 && nVid === 0 ? 'image' : browseKind
+      const prefer: BrowseKind =
+        nVid > 0 && nImg === 0
+          ? 'video'
+          : nImg > 0 && nVid === 0
+            ? 'image'
+            : browseKind
       setBrowseKind(prefer)
+      setStoredBrowseKind(prefer, { projectId })
       await loadAssetsPage(folder.id, prefer, 0)
       if (lastVideo) {
         setBrowseKind('video')
+        setStoredBrowseKind('video', { projectId })
         await loadAssetsPage(folder.id, 'video', 0)
         await selectVideo(lastVideo)
       }
@@ -377,7 +455,10 @@ function LibraryInner() {
         },
       )
       setExtractJob(job)
-      localStorage.setItem(EXTRACT_KEY, job.id)
+      setStoredExtractJobId(job.id, {
+        projectId,
+        videoId: selectedVideo.id,
+      })
       await pollExtract(job.id)
       await loadVideoJobs(selectedVideo.id)
     } catch (e) {
@@ -745,6 +826,8 @@ function LibraryInner() {
                               setSelectedVideo(null)
                               setExtractJob(null)
                               setFrames([])
+                              setVideoJobs([])
+                              setStoredLibraryVideo(null, { projectId })
                             }
                           }}
                         >

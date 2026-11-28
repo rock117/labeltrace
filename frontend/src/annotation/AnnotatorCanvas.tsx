@@ -181,6 +181,7 @@ export function AnnotatorCanvas({
             <KonvaImage image={img} width={stageSize.w} height={stageSize.h} />
           ) : null}
           {shapes.map((s, i) => {
+            if (!s.classId) return null
             const cls = byId.get(s.classId)
             const idx = classes.findIndex((c) => c.id === s.classId)
             const color = resolveColor(cls, idx >= 0 ? idx : i)

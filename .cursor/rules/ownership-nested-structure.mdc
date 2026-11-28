@@ -1,0 +1,49 @@
+---
+description: 按领域归属嵌套设计与实现（客户端状态、配置、域模型）
+alwaysApply: true
+---
+
+# 按归属嵌套（默认原则）
+
+设计与实现 MUST **按对象归属关系嵌套**，禁止无必要的扁平并列。有明确反例理由时才可不嵌套，并在设计/注释中写清原因。
+
+## 适用面
+
+- 客户端持久化（localStorage / 工作区上下文）
+- 前端状态与配置对象的形态
+- 领域模型、API 聚合、文档中的关系表达（与 OpenSpec design D12 一致）
+
+## 客户端持久化约定
+
+| Key | 形态 | 归属 |
+|-----|------|------|
+| `labeltrace.project` | 单一 JSON，按 Project → library.folder.video / dataset 嵌套 | 当前项目工作区「上次选中」 |
+| `labeltrace.session` | `{ token, user: { id, username } }` | 登录会话 |
+| `labeltrace.theme` | 独立标量 | 设备 UI 偏好（非项目/会话域） |
+
+项目域参考形态（可随产品扩展子字段，**勿把子资源抬到根上平铺**）：
+
+```text
+labeltrace.project = {
+  id, name,
+  library: {
+    browseKind,
+    folder: { id, name, video: { id, name, extractJobId } | null } | null
+  },
+  dataset: { id, name, assetId, versionId } | null
+}
+```
+
+## 硬规则
+
+1. **子随父**：换父级 id（如换项目 / 换目录 / 换数据集）MUST 清空或替换其整棵子树。
+2. **勿平铺兄弟**：`folderId`、`extractJobId`、`datasetId` 等不得作为互不相关的根级 key 并列；应挂在归属父对象下。
+3. **跨域分离**：Project 工作区、Session、Theme 分 key；禁止把 token 塞进 project，或把 dataset 塞进 session。
+4. **提示非真相**：localStorage 仅「上次选中」提示；打开页面 MUST 用 API 校验归属，不符则清空对应字段。
+5. **实现入口**：项目工作区读写走 `frontend/src/lib/workspaceStorage.ts`；会话走 `api.ts` 的 session helpers；新增偏好先问归属再决定挂哪一层。
+
+## 允许不嵌套的例外（须说明原因）
+
+- 设备级偏好且与账号/项目无关（如 theme）
+- 可分享的深链以 URL 为准（如 `?version=`），storage 只作辅助
+- 性能/序列化限制有据可查时的刻意扁平（须在 design 或代码注释写明）

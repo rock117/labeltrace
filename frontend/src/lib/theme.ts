@@ -1,3 +1,7 @@
+/**
+ * 设备级 UI 偏好，不属于 Project / Session 域对象。
+ * 保持独立 key：labeltrace.theme
+ */
 export type Theme = 'light' | 'dark'
 
 const KEY = 'labeltrace.theme'

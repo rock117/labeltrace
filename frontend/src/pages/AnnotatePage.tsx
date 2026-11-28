@@ -22,17 +22,60 @@ import { formatError } from '../hooks/useAsync'
 import { AuthImage } from '../components/AuthImage'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
+import { useAppStore } from '../store/appStore'
 import { appConfirm } from '../store/dialogStore'
-
-const DATASET_KEY = 'labeltrace.datasetId'
+import {
+  getStoredDatasetAssetId,
+  getStoredDatasetId,
+  setStoredDataset,
+  setStoredDatasetAssetId,
+  setStoredDatasetVersionId,
+} from '../lib/workspaceStorage'
 
 type MemberFilter = 'all' | 'none' | 'draft' | 'submitted'
 type MemberAnnStatus = 'submitted' | 'draft' | 'none'
 
-function rectItems(shapes: { items?: { type: string }[] } | null | undefined) {
-  return (shapes?.items ?? []).filter(
-    (s): s is RectShape => s.type === 'rect',
-  )
+function rectItems(shapes: { items?: unknown[] } | null | undefined): RectShape[] {
+  const out: RectShape[] = []
+  for (const raw of shapes?.items ?? []) {
+    if (!raw || typeof raw !== 'object') continue
+    const s = raw as Record<string, unknown>
+    if (s.type !== 'rect') continue
+    const classId = typeof s.classId === 'string' ? s.classId : null
+    // 旧数据仅有 cls、无 classId：跳过，避免渲染崩溃白屏
+    if (!classId) continue
+    const bbox = s.bbox
+    if (!Array.isArray(bbox) || bbox.length < 4) continue
+    out.push({
+      type: 'rect',
+      classId,
+      bbox: [Number(bbox[0]), Number(bbox[1]), Number(bbox[2]), Number(bbox[3])],
+    })
+  }
+  return out
+}
+
+function normalizeClasses(raw: unknown): DatasetClass[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((item, i) => {
+      if (typeof item === 'string') {
+        return { id: `legacy-${i}`, name: item, idx: i, color: null }
+      }
+      if (item && typeof item === 'object') {
+        const o = item as Record<string, unknown>
+        const id = typeof o.id === 'string' ? o.id : `legacy-${i}`
+        const name = typeof o.name === 'string' ? o.name : `class${i}`
+        return {
+          id,
+          name,
+          idx: typeof o.idx === 'number' ? o.idx : i,
+          color: typeof o.color === 'string' ? o.color : null,
+        }
+      }
+      return null
+    })
+    .filter((c): c is DatasetClass => c != null)
 }
 
 function shapesKey(items: RectShape[]) {
@@ -46,12 +89,16 @@ function statusLabel(s: MemberAnnStatus, pending = false): string {
 }
 
 function AnnotateInner() {
+  const projectId = useAppStore((s) => s.projectId)
   const [params, setParams] = useSearchParams()
   const versionParam = params.get('version')
   const datasetParam =
     params.get('dataset') ||
-    (!versionParam ? localStorage.getItem(DATASET_KEY) : null)
-  const assetParam = params.get('asset')
+    (!versionParam ? getStoredDatasetId() : null)
+  /** URL 优先；无 ?asset 时用 dataset.assetId 恢复 */
+  const assetParam =
+    params.get('asset') ||
+    (!versionParam ? getStoredDatasetAssetId() : null)
   const readOnly = Boolean(versionParam)
 
   const [dataset, setDataset] = useState<Dataset | null>(null)
@@ -127,7 +174,11 @@ function AnnotateInner() {
         skipped: number
         dataset_id: string
       }>(`/v1/versions/${versionParam}/apply-to-workspace`, { method: 'POST' })
-      localStorage.setItem(DATASET_KEY, r.dataset_id)
+      setStoredDataset({ id: r.dataset_id, name: '' }, { projectId })
+      setStoredDatasetVersionId(null, {
+        projectId,
+        datasetId: r.dataset_id,
+      })
       setMessage(
         `已应用到工作区：新增 ${r.added} · 覆盖 ${r.overwritten}` +
           (r.skipped ? ` · 跳过 ${r.skipped}` : '') +
@@ -153,15 +204,8 @@ function AnnotateInner() {
   )
 
   const classes: DatasetClass[] = useMemo(() => {
-    if (readOnly && version) {
-      return (version.classes || []).map((c, i) => ({
-        id: c.id,
-        name: c.name,
-        idx: i,
-        color: null,
-      }))
-    }
-    return dataset?.classes ?? []
+    if (readOnly && version) return normalizeClasses(version.classes)
+    return normalizeClasses(dataset?.classes)
   }, [readOnly, version, dataset])
 
   useEffect(() => {
@@ -283,6 +327,13 @@ function AnnotateInner() {
       if (verId) nextParams.version = verId
       if (dsId) nextParams.dataset = dsId
       setParams(nextParams, { replace: true })
+      if (dsId && projectId) {
+        setStoredDatasetAssetId(member.asset_id, {
+          projectId,
+          datasetId: dsId,
+        })
+        setStoredDatasetVersionId(verId, { projectId, datasetId: dsId })
+      }
 
       if (verId) {
         const entry = entries[safe]
@@ -334,7 +385,7 @@ function AnnotateInner() {
       dirtyRef.current = false
       await loadContent(member.asset_id)
     },
-    [setParams, loadContent],
+    [setParams, loadContent, projectId],
   )
 
   useEffect(() => {
@@ -364,7 +415,29 @@ function AnnotateInner() {
             filename: e.filename,
           }))
           setMembers(mem)
-          localStorage.setItem(DATASET_KEY, ver.dataset_id)
+          // 版本浏览：校验所属数据集是否在当前项目
+          try {
+            const dsOfVer = await api<Dataset>(
+              `/v1/datasets/${ver.dataset_id}`,
+            )
+            if (projectId && dsOfVer.project_id !== projectId) {
+              setStoredDataset(null, { projectId })
+              setVersion(null)
+              setMembers([])
+              setParams({}, { replace: true })
+              setError('该版本不属于当前项目')
+              return
+            }
+            setStoredDataset(
+              { id: dsOfVer.id, name: dsOfVer.name },
+              { projectId },
+            )
+          } catch {
+            setStoredDataset(
+              { id: ver.dataset_id, name: '' },
+              { projectId },
+            )
+          }
           let idx = 0
           if (assetParam) {
             const found = mem.findIndex((m) => m.asset_id === assetParam)
@@ -385,9 +458,17 @@ function AnnotateInner() {
             api<DatasetAsset[]>(`/v1/datasets/${datasetParam}/assets`),
           ])
           if (cancelled) return
+          if (projectId && ds.project_id !== projectId) {
+            setStoredDataset(null, { projectId })
+            setDataset(null)
+            setMembers([])
+            setParams({}, { replace: true })
+            setError('该数据集不属于当前项目，请从数据集页重新打开')
+            return
+          }
           setDataset(ds)
           setMembers(mem)
-          localStorage.setItem(DATASET_KEY, datasetParam)
+          setStoredDataset({ id: ds.id, name: ds.name }, { projectId })
           let idx = 0
           if (assetParam) {
             const found = mem.findIndex((m) => m.asset_id === assetParam)
@@ -410,9 +491,9 @@ function AnnotateInner() {
     return () => {
       cancelled = true
     }
-    // 仅随 dataset/version 切换重载；asset 翻页走 go()
+    // 仅随 dataset/version/项目 切换重载；asset 翻页走 go()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [datasetParam, versionParam])
+  }, [datasetParam, versionParam, projectId])
 
   useEffect(() => {
     return () => {
@@ -1090,6 +1171,7 @@ function AnnotateInner() {
           ) : (
             <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: 13 }}>
               {shapes.map((s, i) => {
+                if (!s.classId) return null
                 const cls = classes.find((c) => c.id === s.classId)
                 const idx = classes.findIndex((c) => c.id === s.classId)
                 return (

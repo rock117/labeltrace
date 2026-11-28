@@ -17,8 +17,10 @@ import { AuthVideoThumb } from '../components/AuthVideoThumb'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
 import { appConfirm, appPrompt } from '../store/dialogStore'
-
-const DATASET_KEY = 'labeltrace.datasetId'
+import {
+  getStoredDatasetId,
+  setStoredDataset,
+} from '../lib/workspaceStorage'
 
 async function listAllFolders(projectId: string): Promise<Folder[]> {
   const out: Folder[] = []
@@ -44,9 +46,7 @@ function DatasetsInner() {
   const [extractJobs, setExtractJobs] = useState<ProjectExtractJob[]>([])
   const [pickedJobs, setPickedJobs] = useState<Set<string>>(new Set())
   const [pickedMembers, setPickedMembers] = useState<Set<string>>(new Set())
-  const [activeId, setActiveId] = useState<string | null>(
-    localStorage.getItem(DATASET_KEY),
-  )
+  const [activeId, setActiveId] = useState<string | null>(getStoredDatasetId())
   const [active, setActive] = useState<Dataset | null>(null)
   const [members, setMembers] = useState<DatasetAsset[]>([])
   const [sources, setSources] = useState<MemberSource[]>([])
@@ -74,13 +74,22 @@ function DatasetsInner() {
 
   const selectDataset = useCallback(
     async (id: string) => {
-      setActiveId(id)
-      localStorage.setItem(DATASET_KEY, id)
       const [ds, mem, src] = await Promise.all([
         api<Dataset>(`/v1/datasets/${id}`),
         api<DatasetAsset[]>(`/v1/datasets/${id}/assets`),
         api<MemberSource[]>(`/v1/datasets/${id}/member-sources`),
       ])
+      if (ds.project_id !== projectId) {
+        setStoredDataset(null, { projectId })
+        setActiveId(null)
+        setActive(null)
+        setMembers([])
+        setSources([])
+        setError('该数据集不属于当前项目，已清空选择')
+        return []
+      }
+      setActiveId(id)
+      setStoredDataset({ id: ds.id, name: ds.name }, { projectId })
       setActive(ds)
       setClassDraft(ds.classes.map((c) => ({ ...c })))
       setMembers(mem)
@@ -89,7 +98,7 @@ function DatasetsInner() {
       await loadExtractJobs(id)
       return mem
     },
-    [loadExtractJobs],
+    [loadExtractJobs, projectId],
   )
 
   const saveClasses = async () => {
@@ -132,12 +141,15 @@ function DatasetsInner() {
       setLibraryFolderId((prev) =>
         prev && folderList.some((f) => f.id === prev) ? prev : firstFolder,
       )
+      const hint = getStoredDatasetId()
       const prefer =
-        (activeId && list.find((d) => d.id === activeId)?.id) ||
+        (hint && list.find((d) => d.id === hint)?.id) ||
         list[0]?.id ||
         null
       if (prefer) await selectDataset(prefer)
       else {
+        setStoredDataset(null, { projectId })
+        setActiveId(null)
         setActive(null)
         setMembers([])
         setSources([])
@@ -150,7 +162,7 @@ function DatasetsInner() {
     } finally {
       setLoading(false)
     }
-  }, [projectId, activeId, selectDataset])
+  }, [projectId, selectDataset])
 
   useEffect(() => {
     void reload()

@@ -1,30 +1,77 @@
-const TOKEN_KEY = 'labeltrace.token'
-const USER_KEY = 'labeltrace.user'
+/**
+ * 登录会话（非项目域）：token 与 user 同属一次会话，嵌套存放。
+ * labeltrace.session = { token, user: { id, username } }
+ * 旧扁平 labeltrace.token / labeltrace.user 读一次后迁移删除。
+ */
+const SESSION_KEY = 'labeltrace.session'
+const LEGACY_TOKEN_KEY = 'labeltrace.token'
+const LEGACY_USER_KEY = 'labeltrace.user'
 
 export type AuthUser = { id: string; username: string }
 
+type Session = { token: string; user: AuthUser }
+
+function parseUser(raw: unknown): AuthUser | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as { id?: unknown; username?: unknown }
+  if (typeof o.id !== 'string' || !o.id) return null
+  if (typeof o.username !== 'string') return null
+  return { id: o.id, username: o.username }
+}
+
+function readSession(): Session | null {
+  const raw = localStorage.getItem(SESSION_KEY)
+  if (raw) {
+    try {
+      const o = JSON.parse(raw) as { token?: unknown; user?: unknown }
+      const user = parseUser(o.user)
+      if (typeof o.token === 'string' && o.token && user) {
+        return { token: o.token, user }
+      }
+    } catch {
+      /* migrate below */
+    }
+  }
+  const token = localStorage.getItem(LEGACY_TOKEN_KEY)
+  const userRaw = localStorage.getItem(LEGACY_USER_KEY)
+  if (token && userRaw) {
+    try {
+      const user = parseUser(JSON.parse(userRaw))
+      if (user) {
+        const session = { token, user }
+        localStorage.setItem(SESSION_KEY, JSON.stringify(session))
+        localStorage.removeItem(LEGACY_TOKEN_KEY)
+        localStorage.removeItem(LEGACY_USER_KEY)
+        return session
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  localStorage.removeItem(LEGACY_TOKEN_KEY)
+  localStorage.removeItem(LEGACY_USER_KEY)
+  return null
+}
+
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY)
+  return readSession()?.token ?? null
 }
 
 export function getAuthUser(): AuthUser | null {
-  const raw = localStorage.getItem(USER_KEY)
-  if (!raw) return null
-  try {
-    return JSON.parse(raw) as AuthUser
-  } catch {
-    return null
-  }
+  return readSession()?.user ?? null
 }
 
 export function setSession(token: string, user: AuthUser): void {
-  localStorage.setItem(TOKEN_KEY, token)
-  localStorage.setItem(USER_KEY, JSON.stringify(user))
+  const session: Session = { token, user }
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session))
+  localStorage.removeItem(LEGACY_TOKEN_KEY)
+  localStorage.removeItem(LEGACY_USER_KEY)
 }
 
 export function clearSession(): void {
-  localStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem(USER_KEY)
+  localStorage.removeItem(SESSION_KEY)
+  localStorage.removeItem(LEGACY_TOKEN_KEY)
+  localStorage.removeItem(LEGACY_USER_KEY)
 }
 
 /** @deprecated 兼容旧调用；现用登录会话 */

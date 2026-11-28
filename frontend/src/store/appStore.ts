@@ -6,6 +6,13 @@ import {
   setSession,
   type AuthUser,
 } from '../lib/api'
+import {
+  clearWorkspaceProject,
+  readWorkspaceProject,
+  setWorkspaceProject,
+} from '../lib/workspaceStorage'
+
+const boot = readWorkspaceProject()
 
 type AppState = {
   theme: Theme
@@ -22,8 +29,8 @@ type AppState = {
 export const useAppStore = create<AppState>((set, get) => ({
   theme: getStoredTheme(),
   user: getAuthUser(),
-  projectId: localStorage.getItem('labeltrace.projectId'),
-  projectName: localStorage.getItem('labeltrace.projectName'),
+  projectId: boot?.id ?? null,
+  projectName: boot?.name || null,
   setTheme: (t) => {
     applyTheme(t)
     set({ theme: t })
@@ -38,16 +45,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   logout: () => {
     clearSession()
-    localStorage.removeItem('labeltrace.projectId')
-    localStorage.removeItem('labeltrace.projectName')
+    clearWorkspaceProject()
     set({ user: null, projectId: null, projectName: null })
   },
   setProject: (id, name = null) => {
-    if (id) localStorage.setItem('labeltrace.projectId', id)
-    else localStorage.removeItem('labeltrace.projectId')
-    if (name) localStorage.setItem('labeltrace.projectName', name)
-    else localStorage.removeItem('labeltrace.projectName')
-    set({ projectId: id, projectName: name })
+    setWorkspaceProject(id, name)
+    if (!id) {
+      set({ projectId: null, projectName: null })
+      return
+    }
+    const stored = readWorkspaceProject()
+    set({
+      projectId: id,
+      projectName: name ?? stored?.name ?? null,
+    })
   },
 }))
 

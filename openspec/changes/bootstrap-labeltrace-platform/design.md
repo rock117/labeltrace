@@ -639,6 +639,40 @@ services:
 | 敏感 | 不记密码、完整对象存储密钥；文件路径可记 storage_key |
 - **[风险] 赶功能导致 UI 简陋** → P0 验收含 D10 质量标准；先 tokens/壳层再堆页；审查与标注台优先投入视觉。
 
+### D12. 按归属嵌套（设计与实现默认原则）
+
+**默认：** 配置、客户端持久化、域模型表达 MUST 按对象归属关系嵌套；禁止把本属父子的字段拆成互不相关的扁平并列 key/字段，除非有书面例外理由。
+
+**客户端持久化分区：**
+
+| Key | 内容 | 为何独立 |
+|-----|------|----------|
+| `labeltrace.project` | 当前项目工作区「上次选中」单一 JSON | 租户边界；换项目整对象替换 |
+| `labeltrace.session` | `{ token, user: { id, username } }` | 登录会话，非项目域 |
+| `labeltrace.theme` | `light` \| `dark` | 设备 UI 偏好，非项目/会话域 |
+
+**`labeltrace.project` 嵌套（与领域一致，可达 3～4 层）：**
+
+```text
+Project
+├── library
+│     └── folder → Project
+│           └── video → folder 浏览上下文
+│                 └── extractJobId → video
+└── dataset → Project
+      ├── assetId（标注上次成员）
+      └── versionId → Dataset
+```
+
+**级联：** 更换父级 id 时清空/替换其子树（换项目清 library+dataset；换目录清 video；换数据集清 assetId/versionId）。
+
+**提示非真相：** localStorage 仅恢复提示；页面加载 MUST 经 API 校验 `project_id`（及必要的父子归属），不符则清空对应字段。深链以 URL 为准（如版本只读 `?version=`），storage 不强制自动进入只读态。
+
+**实现：** `frontend/src/lib/workspaceStorage.ts`、`api.ts` session helpers；Cursor rule `ownership-nested-structure`。
+
+- **[取舍] theme 不进 session** → 同设备未登录也应可切主题；账号级偏好若日后上云再议。  
+- **[风险] 扁平 key 回潮** → code review / rule 拦；旧 key 只做一次性迁移删除。
+
 ## Migration Plan
 
 - 绿库按表草案创建。  

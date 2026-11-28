@@ -5,7 +5,12 @@ import type { Dataset, Version } from '../lib/types'
 import { formatError } from '../hooks/useAsync'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
+import { useAppStore } from '../store/appStore'
 import { appConfirm } from '../store/dialogStore'
+import {
+  getStoredDatasetId,
+  setStoredDataset,
+} from '../lib/workspaceStorage'
 
 type JobStatus = {
   id: string
@@ -15,12 +20,11 @@ type JobStatus = {
   error_message: string | null
 }
 
-const DATASET_KEY = 'labeltrace.datasetId'
-
 function VersionsInner() {
-  const [params] = useSearchParams()
+  const projectId = useAppStore((s) => s.projectId)
+  const [params, setParams] = useSearchParams()
   const datasetId =
-    params.get('dataset') || localStorage.getItem(DATASET_KEY)
+    params.get('dataset') || getStoredDatasetId()
 
   const [dataset, setDataset] = useState<Dataset | null>(null)
   const [versions, setVersions] = useState<Version[]>([])
@@ -146,7 +150,10 @@ function VersionsInner() {
         `已应用到工作区：新增 ${r.added} · 覆盖 ${r.overwritten}` +
           (r.skipped ? ` · 跳过 ${r.skipped}` : ''),
       )
-      localStorage.setItem(DATASET_KEY, r.dataset_id)
+      setStoredDataset(
+        { id: r.dataset_id, name: dataset?.name || '' },
+        { projectId },
+      )
     } catch (e) {
       setError(formatError(e))
     } finally {
@@ -162,20 +169,34 @@ function VersionsInner() {
         api<Dataset>(`/v1/datasets/${id}`),
         api<Version[]>(`/v1/datasets/${id}/versions`),
       ])
+      if (projectId && ds.project_id !== projectId) {
+        setStoredDataset(null, { projectId })
+        setDataset(null)
+        setVersions([])
+        setParams({}, { replace: true })
+        setError('该数据集不属于当前项目，请从数据集页重新打开')
+        return
+      }
       setDataset(ds)
       setVersions(vers)
-      localStorage.setItem(DATASET_KEY, id)
+      setStoredDataset({ id: ds.id, name: ds.name }, { projectId })
     } catch (e) {
       setError(formatError(e))
+      setDataset(null)
+      setVersions([])
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [projectId, setParams])
 
   useEffect(() => {
     if (datasetId) void reload(datasetId)
-    else setLoading(false)
-  }, [datasetId, reload])
+    else {
+      setDataset(null)
+      setVersions([])
+      setLoading(false)
+    }
+  }, [datasetId, reload, projectId])
 
   const publish = async () => {
     if (!datasetId || !name.trim() || !splitOk) return

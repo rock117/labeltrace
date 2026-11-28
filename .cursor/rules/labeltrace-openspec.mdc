@@ -15,6 +15,7 @@ alwaysApply: true
 6. **优先级**：主体路径（标注/发版/血缘/UI）优先；**YOLO 导入与 zip 导出延后**，不阻塞主体验收。
 7. **硬约束摘要**：frame/image 可标、video 不可直接标框；抽帧落盘→时间序审查→入集；版本不可变；JobBackend/BlobStore 抽象；UI 产品级、默认 light 可切 dark。
 8. **工程规范**：禁止静默吞错；结构化日志（request_id/job_id）须能快速排错（design D11）。
-9. **文档**：用户可见流程见 `docs/guides/`；勿把操作手册写进 spec。
-10. **验收口径**：后端 API 有 ≠ 功能完成；P0 须有对应产品 UI（或 tasks 明确延后）。向用户汇报进度时区分 API / UI / 未做，禁止把半成品说成「已实现」。
-11. **改码须同步 Spec（如有必要）**：若实现改变了业务规则、验收 Scenario、领域模型或对外 API/架构约定，MUST 同步更新本 change 下对应 `specs/**/spec.md`（及必要时 `design.md` / `tasks.md` / `docs/guides/`）。禁止只改代码让 spec 过期。纯重构、样式、排错且行为契约不变时可不动 spec。
+9. **按归属嵌套（D12）**：配置 / 客户端持久化 / 域表达默认按父子归属嵌套（见 rule `ownership-nested-structure`）；禁止无必要扁平并列；换父级清空子树；localStorage 仅提示，须 API 校验。
+10. **文档**：用户可见流程见 `docs/guides/`；勿把操作手册写进 spec。
+11. **验收口径**：后端 API 有 ≠ 功能完成；P0 须有对应产品 UI（或 tasks 明确延后）。向用户汇报进度时区分 API / UI / 未做，禁止把半成品说成「已实现」。
+12. **改码须同步 Spec（如有必要）**：若实现改变了业务规则、验收 Scenario、领域模型或对外 API/架构约定，MUST 同步更新本 change 下对应 `specs/**/spec.md`（及必要时 `design.md` / `tasks.md` / `docs/guides/`）。禁止只改代码让 spec 过期。纯重构、样式、排错且行为契约不变时可不动 spec。

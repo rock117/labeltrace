@@ -9,7 +9,7 @@ alwaysApply: true
 
 - 业务规则（能否发版、能否删除、权限、可见性等）
 - Spec Scenario 的 WHEN/THEN
-- 领域模型 / API 契约 / design 架构决策
+- 领域模型 / API 契约 / design 架构决策（含 D12：按归属嵌套的客户端状态分区与形态）
 
 更新范围：相关 `specs/**/spec.md`；架构变化再改 `design.md`；新工作量勾 `tasks.md`；用户流程变了则改 `docs/guides/`。
 
