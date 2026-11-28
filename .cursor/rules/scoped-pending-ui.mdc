@@ -10,4 +10,5 @@ alwaysApply: true
 - 禁止页面级 `busy` 去 `disabled` 或改写无关按钮。无关按钮保持原样。
 - 进行中的 key 跟操作走，例如 `import`、`rename:${id}`。只有该按钮禁用；「处理中…」也只出现在这一处。
 - 用 `frontend/src/hooks/useActionPending.ts` 的 `run(key, fn)` / `is(key)`。
+- `run` 用 ref 记进行中的 key；不要在 `setState` 更新函数里写副作用来决定是否执行（更新可能不同步，会导致点击无请求）。
 - 整页只有一个提交按钮的表单（如登录）可以用该按钮自己的状态。
