@@ -7,15 +7,19 @@
 ## ADDED Requirements
 
 ### Requirement: 标注绑定数据集与素材
-系统 SHALL 对每个 `(dataset, asset)` 至多保存一份工作标注；对非数据集成员的素材，MUST 拒绝写入标注。
+系统 SHALL 对每个 `(dataset, asset)` 至多保存一份工作标注；对非数据集成员的素材，MUST 拒绝写入标注。写入时 MUST 满足任务分配规则：`owner` 可标注任意成员；仅有 `annotator` 角色时 MUST 为该成员的 `assignee`；未分配成员对非 `owner` MUST 拒绝。
 
 #### Scenario: 为成员保存框
-- **WHEN** 用户为已是数据集成员的素材保存检测框
+- **WHEN** 用户为已是数据集成员、且有权标注的素材保存检测框
 - **THEN** 系统将该几何与类别持久化到该数据集与该素材下
 
 #### Scenario: 拒绝非成员标注
 - **WHEN** 用户尝试为未加入该数据集的素材保存标注
 - **THEN** 系统拒绝该请求
+
+#### Scenario: 拒绝标注他人名下成员
+- **WHEN** 仅有 annotator 角色的用户对分给其他用户的成员写入标注
+- **THEN** 系统拒绝
 
 ### Requirement: 跨数据集隔离
 同一素材在不同数据集中的标注 SHALL 相互独立；更新其一 MUST NOT 改变另一份。

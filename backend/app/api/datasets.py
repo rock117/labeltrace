@@ -5,13 +5,14 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import (
     ALL_ROLES,
+    OWNER_ROLES,
     WRITE_ROLES,
     CurrentUser,
     get_current_user,
@@ -27,6 +28,11 @@ from app.models.asset import Asset
 from app.models.dataset import Dataset, DatasetAsset
 from app.models.frame_extract_job import FrameExtractJob
 from app.models.project import Membership
+from app.services.assignment import (
+    must_list_mine_only,
+    resolve_assignee_user_id,
+    usernames_for_ids,
+)
 from app.services.project_classes import (
     classes_as_dicts,
     enable_all_project_classes,
@@ -85,11 +91,54 @@ class DatasetAssetOut(BaseModel):
     media_kind: str
     filename: str
     annotation_status: Literal["draft", "submitted"] | None = None
+    assignee_user_id: str | None = None
+    assignee_username: str | None = None
 
 
 class AddExtractFramesIn(BaseModel):
     extract_job_id: UUID
     split: Split = "unassigned"
+
+
+class MemberPatch(BaseModel):
+    """split 与 assignee 均可选；显式传 assigneeUserId: null 表示清空分配。"""
+
+    split: Split | None = None
+    assignee_user_id: str | None = Field(
+        default=None, alias="assigneeUserId"
+    )
+
+    model_config = {"populate_by_name": True}
+
+
+class AssignmentsIn(BaseModel):
+    asset_ids: list[UUID] = Field(..., min_length=1, alias="assetIds")
+    assignee_user_id: str | None = Field(
+        default=None, alias="assigneeUserId"
+    )
+
+    model_config = {"populate_by_name": True}
+
+
+def _asset_out(
+    asset_id: UUID,
+    split: str,
+    media_kind: str,
+    filename: str,
+    *,
+    annotation_status: Literal["draft", "submitted"] | None = None,
+    assignee_user_id: str | None = None,
+    assignee_username: str | None = None,
+) -> DatasetAssetOut:
+    return DatasetAssetOut(
+        asset_id=asset_id,
+        split=split,
+        media_kind=media_kind,
+        filename=filename,
+        annotation_status=annotation_status,
+        assignee_user_id=assignee_user_id,
+        assignee_username=assignee_username,
+    )
 
 
 def _dataset_out(db: Session, ds: Dataset) -> DatasetOut:
@@ -240,20 +289,22 @@ def add_assets(
             raise ValidationAppError("不能将 video 直接加入数据集，请使用 frame/image")
         existing = db.get(DatasetAsset, (dataset_id, aid))
         if existing is None:
-            db.add(
-                DatasetAsset(
-                    dataset_id=dataset_id, asset_id=aid, split=body.split
-                )
+            row = DatasetAsset(
+                dataset_id=dataset_id, asset_id=aid, split=body.split
             )
+            db.add(row)
+            assignee_uid = None
             split = body.split
         else:
+            assignee_uid = existing.assignee_user_id
             split = existing.split
         out.append(
-            DatasetAssetOut(
-                asset_id=aid,
-                split=split,
-                media_kind=asset.media_kind,
-                filename=asset.filename,
+            _asset_out(
+                aid,
+                split,
+                asset.media_kind,
+                asset.filename,
+                assignee_user_id=assignee_uid,
             )
         )
     db.commit()
@@ -283,18 +334,14 @@ def remove_asset(
     db.commit()
 
 
-class SplitUpdate(BaseModel):
-    split: Split
-
-
 @router.patch(
     "/datasets/{dataset_id}/assets/{asset_id}",
     response_model=DatasetAssetOut,
 )
-def update_split(
+def patch_member(
     dataset_id: UUID,
     asset_id: UUID,
-    body: SplitUpdate,
+    body: MemberPatch,
     user: Annotated[CurrentUser, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DatasetAssetOut:
@@ -310,19 +357,37 @@ def update_split(
     asset = db.get(Asset, asset_id)
     if asset is None:
         raise NotFoundError("素材不存在")
-    row.split = body.split
+    if body.split is not None:
+        row.split = body.split
+    if "assignee_user_id" in body.model_fields_set:
+        if not has_any_role(m, OWNER_ROLES):
+            raise ForbiddenError("仅负责人可改任务分配")
+        row.assignee_user_id = resolve_assignee_user_id(
+            db, ds.project_id, body.assignee_user_id
+        )
     db.commit()
-    return DatasetAssetOut(
-        asset_id=asset_id,
-        split=row.split,
-        media_kind=asset.media_kind,
-        filename=asset.filename,
+    names = usernames_for_ids(
+        db, [row.assignee_user_id] if row.assignee_user_id else []
+    )
+    return _asset_out(
+        asset_id,
+        row.split,
+        asset.media_kind,
+        asset.filename,
+        assignee_user_id=row.assignee_user_id,
+        assignee_username=names.get(row.assignee_user_id)
+        if row.assignee_user_id
+        else None,
     )
 
 
-@router.get("/datasets/{dataset_id}/assets", response_model=list[DatasetAssetOut])
-def list_members(
+@router.post(
+    "/datasets/{dataset_id}/assignments",
+    response_model=list[DatasetAssetOut],
+)
+def assign_members(
     dataset_id: UUID,
+    body: AssignmentsIn,
     user: Annotated[CurrentUser, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> list[DatasetAssetOut]:
@@ -330,13 +395,59 @@ def list_members(
     if ds is None:
         raise NotFoundError("数据集不存在")
     m = get_membership(db, ds.project_id, user.id)
+    if m is None or not has_any_role(m, OWNER_ROLES):
+        raise ForbiddenError("仅负责人可分配任务")
+    target = resolve_assignee_user_id(db, ds.project_id, body.assignee_user_id)
+    names = usernames_for_ids(db, [target] if target else [])
+    out: list[DatasetAssetOut] = []
+    for aid in body.asset_ids:
+        row = db.get(DatasetAsset, (dataset_id, aid))
+        if row is None:
+            raise NotFoundError(f"成员不存在: {aid}")
+        asset = db.get(Asset, aid)
+        if asset is None:
+            raise NotFoundError(f"素材不存在: {aid}")
+        row.assignee_user_id = target
+        out.append(
+            _asset_out(
+                aid,
+                row.split,
+                asset.media_kind,
+                asset.filename,
+                assignee_user_id=target,
+                assignee_username=names.get(target) if target else None,
+            )
+        )
+    db.commit()
+    logger.info(
+        "dataset_assignments dataset_id=%s count=%s assignee=%s",
+        dataset_id,
+        len(body.asset_ids),
+        target,
+    )
+    return out
+
+
+@router.get("/datasets/{dataset_id}/assets", response_model=list[DatasetAssetOut])
+def list_members(
+    dataset_id: UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+    mine: Annotated[bool, Query()] = False,
+) -> list[DatasetAssetOut]:
+    ds = db.get(Dataset, dataset_id)
+    if ds is None:
+        raise NotFoundError("数据集不存在")
+    m = get_membership(db, ds.project_id, user.id)
     if m is None:
         raise ForbiddenError("不是项目成员")
-    rows = db.scalars(
-        select(DatasetAsset).where(DatasetAsset.dataset_id == dataset_id)
-    ).all()
+    force_mine = must_list_mine_only(m)
+    filter_mine = force_mine or mine
+    q = select(DatasetAsset).where(DatasetAsset.dataset_id == dataset_id)
+    if filter_mine:
+        q = q.where(DatasetAsset.assignee_user_id == user.id)
+    rows = list(db.scalars(q).all())
     asset_ids = [r.asset_id for r in rows]
-    # asset_id -> (status, has_shapes)
     status_map: dict[UUID, tuple[str, bool]] = {}
     if asset_ids:
         for ann in db.scalars(
@@ -347,6 +458,9 @@ def list_members(
         ).all():
             items = (ann.shapes or {}).get("items") or []
             status_map[ann.asset_id] = (ann.status or "", bool(items))
+    name_map = usernames_for_ids(
+        db, [r.assignee_user_id for r in rows if r.assignee_user_id]
+    )
     out: list[DatasetAssetOut] = []
     for r in rows:
         asset = db.get(Asset, r.asset_id)
@@ -359,15 +473,18 @@ def list_members(
             if st == "submitted":
                 ann_status = "submitted"
             elif st == "draft" or has_shapes:
-                # 有框但状态异常时仍视为草稿，避免「有框却算未标注」
                 ann_status = "draft"
         out.append(
-            DatasetAssetOut(
-                asset_id=r.asset_id,
-                split=r.split,
-                media_kind=asset.media_kind,
-                filename=asset.filename,
+            _asset_out(
+                r.asset_id,
+                r.split,
+                asset.media_kind,
+                asset.filename,
                 annotation_status=ann_status,
+                assignee_user_id=r.assignee_user_id,
+                assignee_username=name_map.get(r.assignee_user_id)
+                if r.assignee_user_id
+                else None,
             )
         )
     return out

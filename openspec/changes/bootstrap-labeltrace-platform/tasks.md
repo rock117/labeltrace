@@ -56,6 +56,7 @@
 - [x] 5.1 实现 Dataset 创建（含有序 classes、`enabled_annotation_types` 默认 `["rect"]`）与详情 API，并验证类别与启用类型读回正确
 - [x] 5.1b 创建数据集只提交名称；默认启用当时全部项目类别，新建类别追加到各数据集末尾，数据集页可取消勾选（YOLO 导入按名字复用或新建）
 - [x] 5.2 实现 DatasetAsset 加入/移除（不拷贝、不硬删文件），并验证同一 asset 可属两个数据集
+- [x] 5.2c 成员任务分配：`assignee_user_id`；owner 批量分配；annotator 只见/只标自己的；未分配非 owner 不可标；标注台 mine/all
 - [x] 5.3 实现 split 更新（train/val/test/unassigned），并验证读回一致
 - [x] 5.4 增加跨项目引用防护测试，验证将他项素材加入本项数据集被拒绝
 - [x] 5.5 验证「仅含非库可见成员」的数据集可列表与打开内容

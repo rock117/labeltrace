@@ -126,6 +126,14 @@ export type DatasetAsset = {
   filename: string
   /** 工作区标注状态；无记录则为 null/undefined */
   annotation_status?: 'draft' | 'submitted' | null
+  assignee_user_id?: string | null
+  assignee_username?: string | null
+}
+
+export type ProjectMember = {
+  user_id: string
+  username: string
+  roles: Array<'owner' | 'annotator' | 'viewer' | string>
 }
 
 export type MemberSource =

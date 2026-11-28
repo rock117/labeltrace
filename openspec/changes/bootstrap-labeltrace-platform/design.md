@@ -112,7 +112,7 @@ FastAPI（鉴权、领域用例）
 | Dataset | 数据集；按 `DatasetClassRef` 有序启用项目类别；**`enabled_annotation_types`** |
 | ProjectClass | 项目类别词表：稳定 `id` + `name` + 可选 `color`；无顺序、无 YOLO 编号 |
 | DatasetClassRef | 数据集对项目类别的有序启用（`idx`）；标注 `classId` 指向 ProjectClass；YOLO 数字 id 仅按该顺序在导出/导入时编解码 |
-| DatasetAsset | 引用 + `split` |
+| DatasetAsset | 引用 + `split` + 可选 `assignee_user_id`（任务分配；薄版无任务包实体） |
 | Annotation | `(dataset_id, asset_id)`；`shapes` 为带 `type` 的异构列表 |
 | DatasetVersion | 不可变快照（含当时 `enabled_annotation_types` + shapes） |
 | DatasetImport | 导入记录；P0 绑定 detect codec，日后按类型扩展 |
@@ -409,7 +409,8 @@ P0 默认：**导入到新建数据集**（实现简单）；导入到已有空�
 | GET | `/datasets/{datasetId}` | 含已启用 `classes: [{id,name,idx,color?}]`（id 为项目类别）、`enabledAnnotationTypes` |
 | PUT | `/datasets/{datasetId}/classes` | `{ classIds: uuid[] }` 按顺序启用词表子集；停用仍被本集标注引用的类别 → 409 |
 | PATCH | `/datasets/{datasetId}` | 可改启用类型（需校验策略） |
-| GET/POST/DELETE/PATCH | `/datasets/{datasetId}/assets...` | 成员与 split（同前） |
+| GET/POST/DELETE/PATCH | `/datasets/{datasetId}/assets...` | 成员与 split；PATCH 可改 `assigneeUserId`（仅 owner）；列表对纯 annotator 默认只返回自己的 |
+| POST | `/datasets/{datasetId}/assignments` | `{ assetIds, assigneeUserId|null }` 批量分配/清空（仅 owner） |
 | PUT | `/datasets/{datasetId}/assets/{assetId}/annotation` | shapes 每项必含 `type`；按启用类型 + Registry 校验 |
 | POST | `/datasets/{datasetId}/versions` | 快照含 `enabled_annotation_types` |
 

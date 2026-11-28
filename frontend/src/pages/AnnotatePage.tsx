@@ -8,6 +8,7 @@ import type {
   Dataset,
   DatasetAsset,
   DatasetClass,
+  ProjectMember,
   RectShape,
   Version,
   VersionManifest,
@@ -89,6 +90,7 @@ function statusLabel(s: MemberAnnStatus, pending = false): string {
 
 function AnnotateInner() {
   const projectId = useAppStore((s) => s.projectId)
+  const me = useAppStore((s) => s.user)
   const [params, setParams] = useSearchParams()
   const versionParam = params.get('version')
   const datasetParam =
@@ -120,6 +122,9 @@ function AnnotateInner() {
   const [applying, setApplying] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [memberFilter, setMemberFilter] = useState<MemberFilter>('all')
+  const [isOwner, setIsOwner] = useState(false)
+  /** owner 可切全部；annotator 后端强制 mine */
+  const [memberScope, setMemberScope] = useState<'mine' | 'all'>('all')
   const stripRef = useRef<HTMLDivElement>(null)
   const baselineKeyRef = useRef('')
   const shapesRef = useRef<RectShape[]>([])
@@ -452,10 +457,7 @@ function AnnotateInner() {
         } else if (datasetParam) {
           setVersion(null)
           setSnapshotEntries([])
-          const [ds, mem] = await Promise.all([
-            api<Dataset>(`/v1/datasets/${datasetParam}`),
-            api<DatasetAsset[]>(`/v1/datasets/${datasetParam}/assets`),
-          ])
+          const ds = await api<Dataset>(`/v1/datasets/${datasetParam}`)
           if (cancelled) return
           if (projectId && ds.project_id !== projectId) {
             setStoredDataset(null, { projectId })
@@ -465,6 +467,26 @@ function AnnotateInner() {
             setError('该数据集不属于当前项目，请从数据集页重新打开')
             return
           }
+          let owner = false
+          if (projectId && me?.id) {
+            try {
+              const roster = await api<ProjectMember[]>(
+                `/v1/projects/${projectId}/members`,
+              )
+              if (cancelled) return
+              owner = roster.some(
+                (m) => m.user_id === me.id && m.roles.includes('owner'),
+              )
+              setIsOwner(owner)
+            } catch {
+              setIsOwner(false)
+            }
+          }
+          const scopeMine = !owner || memberScope === 'mine'
+          const mem = await api<DatasetAsset[]>(
+            `/v1/datasets/${datasetParam}/assets${scopeMine ? '?mine=1' : ''}`,
+          )
+          if (cancelled) return
           setDataset(ds)
           setMembers(mem)
           setStoredDataset({ id: ds.id, name: ds.name }, { projectId })
@@ -490,9 +512,9 @@ function AnnotateInner() {
     return () => {
       cancelled = true
     }
-    // 仅随 dataset/version/项目 切换重载；asset 翻页走 go()
+    // 仅随 dataset/version/项目/分配范围 切换重载；asset 翻页走 go()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [datasetParam, versionParam, projectId])
+  }, [datasetParam, versionParam, projectId, memberScope, me?.id])
 
   useEffect(() => {
     return () => {
@@ -818,19 +840,44 @@ function AnnotateInner() {
   if (members.length === 0) {
     return (
       <StateBlock
-        title={readOnly ? '该版本没有成员' : '数据集没有可标注成员'}
+        title={
+          readOnly
+            ? '该版本没有成员'
+            : memberScope === 'mine' || !isOwner
+              ? '没有分给你的成员'
+              : '数据集没有可标注成员'
+        }
         description={
           readOnly
             ? '此快照为空。'
-            : '请先将审查剩余帧或图片加入数据集。'
+            : memberScope === 'mine' || !isOwner
+              ? '请让负责人在数据集页把图片分配给你，或（负责人）切换到「全部」。'
+              : '请先将审查剩余帧或图片加入数据集。'
         }
         action={
-          <Link
-            to={readOnly ? `/versions?dataset=${version?.dataset_id ?? ''}` : '/datasets'}
-            className="lt-btn lt-btn-primary"
-          >
-            返回
-          </Link>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {isOwner && !readOnly ? (
+              <button
+                type="button"
+                className="lt-btn"
+                onClick={() =>
+                  setMemberScope((s) => (s === 'mine' ? 'all' : 'mine'))
+                }
+              >
+                {memberScope === 'mine' ? '查看全部' : '只看我的'}
+              </button>
+            ) : null}
+            <Link
+              to={
+                readOnly
+                  ? `/versions?dataset=${version?.dataset_id ?? ''}`
+                  : '/datasets'
+              }
+              className="lt-btn lt-btn-primary"
+            >
+              返回
+            </Link>
+          </div>
         }
       />
     )
@@ -869,6 +916,18 @@ function AnnotateInner() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {isOwner && !readOnly ? (
+            <button
+              type="button"
+              className="lt-btn"
+              onClick={() =>
+                setMemberScope((s) => (s === 'mine' ? 'all' : 'mine'))
+              }
+              title="负责人可切换只看自己的分配或全部成员"
+            >
+              {memberScope === 'mine' ? '范围：只看我的' : '范围：全部'}
+            </button>
+          ) : null}
           {readOnly ? (
             <>
               <Link

@@ -24,6 +24,11 @@ from app.core.logging import get_logger
 from app.db.session import get_db
 from app.models.annotation import Annotation
 from app.models.dataset import Dataset, DatasetAsset
+from app.services.assignment import (
+    can_annotate_member,
+    is_project_owner,
+    require_can_annotate,
+)
 
 router = APIRouter(tags=["annotations"])
 logger = get_logger("labeltrace.api.annotations")
@@ -76,6 +81,7 @@ def put_annotation(
     member = db.get(DatasetAsset, (dataset_id, asset_id))
     if member is None:
         raise ValidationAppError("素材不是该数据集成员，无法标注")
+    require_can_annotate(m, member, user.id)
 
     enabled = list(ds.enabled_annotation_types or ["rect"])
     from app.services.project_classes import class_id_set
@@ -186,13 +192,14 @@ def submit_all_drafts(
     if m is None or not has_any_role(m, WRITE_ROLES):
         raise ForbiddenError("权限不足")
 
-    member_ids = list(
+    rows = list(
         db.scalars(
-            select(DatasetAsset.asset_id).where(
-                DatasetAsset.dataset_id == dataset_id
-            )
+            select(DatasetAsset).where(DatasetAsset.dataset_id == dataset_id)
         ).all()
     )
+    if not is_project_owner(m):
+        rows = [r for r in rows if can_annotate_member(m, r, user.id)]
+    member_ids = [r.asset_id for r in rows]
     if not member_ids:
         return SubmitDraftsOut(
             updated=0, already_submitted=0, without_annotation=0

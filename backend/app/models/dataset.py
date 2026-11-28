@@ -76,3 +76,7 @@ class DatasetAsset(Base):
         String(32), nullable=False, default="unassigned"
     )
     # train | val | test | unassigned
+    # 任务分配：存 users.id 字符串；空=未分配。改分配仅 owner。
+    assignee_user_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, index=True
+    )

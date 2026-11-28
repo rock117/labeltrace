@@ -9,6 +9,7 @@ import type {
   MemberSource,
   ProjectClass,
   ProjectExtractJob,
+  ProjectMember,
 } from '../lib/types'
 import { useAppStore } from '../store/appStore'
 import { formatError } from '../hooks/useAsync'
@@ -39,6 +40,7 @@ async function listAllFolders(projectId: string): Promise<Folder[]> {
 
 function DatasetsInner() {
   const projectId = useAppStore((s) => s.projectId)!
+  const me = useAppStore((s) => s.user)
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [folders, setFolders] = useState<Folder[]>([])
   const [libraryFolderId, setLibraryFolderId] = useState('')
@@ -57,8 +59,17 @@ function DatasetsInner() {
   const [importName, setImportName] = useState('')
   const [projectClasses, setProjectClasses] = useState<ProjectClass[]>([])
   const [enabledIds, setEnabledIds] = useState<string[]>([])
+  const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
+  const [assignTo, setAssignTo] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+
+  const isOwner = projectMembers.some(
+    (m) => m.user_id === me?.id && m.roles.includes('owner'),
+  )
+  const writableMembers = projectMembers.filter((m) =>
+    m.roles.some((r) => r === 'owner' || r === 'annotator'),
+  )
 
   const loadExtractJobs = useCallback(
     async (datasetId: string | null) => {
@@ -126,13 +137,15 @@ function DatasetsInner() {
     setLoading(true)
     setError(null)
     try {
-      const [list, folderList, vocabulary] = await Promise.all([
+      const [list, folderList, vocabulary, roster] = await Promise.all([
         api<Dataset[]>(`/v1/projects/${projectId}/datasets`),
         listAllFolders(projectId),
         api<ProjectClass[]>(`/v1/projects/${projectId}/classes`),
+        api<ProjectMember[]>(`/v1/projects/${projectId}/members`),
       ])
       setDatasets(list)
       setProjectClasses(vocabulary)
+      setProjectMembers(roster)
       setFolders(folderList)
       const firstFolder = folderList[0]?.id || ''
       setLibraryFolderId((prev) =>
@@ -374,6 +387,47 @@ function DatasetsInner() {
     } catch (e) {
       setError(formatError(e))
     }
+    })
+  }
+
+  const assignSelectedMembers = async (assigneeUserId: string | null) => {
+    if (!active || pickedMembers.size === 0 || !isOwner) return
+    const n = pickedMembers.size
+    setError(null)
+    await run('assign-members', async () => {
+      try {
+        const updated = await api<DatasetAsset[]>(
+          `/v1/datasets/${active.id}/assignments`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              assetIds: [...pickedMembers],
+              assigneeUserId,
+            }),
+          },
+        )
+        const byId = new Map(updated.map((u) => [u.asset_id, u]))
+        setMembers((prev) =>
+          prev.map((m) => {
+            const next = byId.get(m.asset_id)
+            return next
+              ? {
+                  ...m,
+                  assignee_user_id: next.assignee_user_id,
+                  assignee_username: next.assignee_username,
+                }
+              : m
+          }),
+        )
+        const label =
+          assigneeUserId == null
+            ? '未分配'
+            : writableMembers.find((w) => w.user_id === assigneeUserId)
+                ?.username ?? '指定用户'
+        setMessage(`已将 ${n} 张分配给「${label}」`)
+      } catch (e) {
+        setError(formatError(e))
+      }
     })
   }
 
@@ -868,7 +922,7 @@ function DatasetsInner() {
                       : ''}
                   </h3>
                   {members.length > 0 ? (
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                       <button
                         type="button"
                         className="lt-btn"
@@ -878,6 +932,47 @@ function DatasetsInner() {
                           ? '取消全选'
                           : '全选'}
                       </button>
+                      {isOwner ? (
+                        <>
+                          <select
+                            className="lt-input"
+                            style={{ width: 'auto', minWidth: 140 }}
+                            value={assignTo}
+                            onChange={(e) => setAssignTo(e.target.value)}
+                            disabled={pickedMembers.size === 0}
+                          >
+                            <option value="">分配给…</option>
+                            {writableMembers.map((w) => (
+                              <option key={w.user_id} value={w.user_id}>
+                                {w.username}
+                                {w.user_id === me?.id ? '（我）' : ''}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            className="lt-btn"
+                            disabled={
+                              is('assign-members') ||
+                              pickedMembers.size === 0 ||
+                              !assignTo
+                            }
+                            onClick={() => void assignSelectedMembers(assignTo)}
+                          >
+                            分配所选
+                          </button>
+                          <button
+                            type="button"
+                            className="lt-btn"
+                            disabled={
+                              is('assign-members') || pickedMembers.size === 0
+                            }
+                            onClick={() => void assignSelectedMembers(null)}
+                          >
+                            清空分配
+                          </button>
+                        </>
+                      ) : null}
                       <button
                         type="button"
                         className="lt-btn lt-btn-danger"
@@ -911,7 +1006,7 @@ function DatasetsInner() {
                     fontSize: 13,
                   }}
                 >
-                  点击缩略图多选后批量移出（只删引用）。划分在发版时指定。
+                  点击缩略图多选后可分配任务或批量移出（只删引用）。划分在发版时指定。
                 </p>
                 {members.length === 0 ? (
                   <StateBlock
@@ -922,16 +1017,28 @@ function DatasetsInner() {
                   <div className="lt-thumb-grid">
                     {members.map((m) => {
                       const on = pickedMembers.has(m.asset_id)
+                      const who = m.assignee_username || '未分配'
                       return (
                         <button
                           key={m.asset_id}
                           type="button"
                           className={`lt-thumb${on ? ' selected' : ''}`}
-                          title={m.filename}
+                          title={`${m.filename} · ${who}`}
                           onClick={() => toggleMember(m.asset_id)}
                         >
                           <AuthImage assetId={m.asset_id} alt={m.filename} />
-                          <div className="lt-thumb-meta">{m.filename}</div>
+                          <div className="lt-thumb-meta">
+                            {m.filename}
+                            <div
+                              style={{
+                                fontSize: 11,
+                                color: 'var(--lt-fg-muted)',
+                                marginTop: 2,
+                              }}
+                            >
+                              {who}
+                            </div>
+                          </div>
                         </button>
                       )
                     })}
