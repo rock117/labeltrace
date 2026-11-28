@@ -541,7 +541,16 @@ function DatasetsInner() {
           <span style={{ fontSize: 13, color: 'var(--lt-fg-muted)' }}>
             导入 YOLO zip
           </span>
-          <label style={{ fontSize: 13, color: 'var(--lt-fg-muted)' }}>
+          <label
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 13,
+              color: 'var(--lt-fg-muted)',
+              whiteSpace: 'nowrap',
+            }}
+          >
             剖面
             <select
               className="lt-input"
@@ -553,7 +562,7 @@ function DatasetsInner() {
                   e.target.value as 'detect' | 'segment' | 'obb' | 'pose',
                 )
               }
-              style={{ marginLeft: 6, maxWidth: 140 }}
+              style={{ maxWidth: 140 }}
             >
               <option value="detect">检测框</option>
               <option value="segment">多边形分割</option>

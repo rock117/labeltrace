@@ -16,6 +16,10 @@ import { useActionPending } from '../hooks/useActionPending'
 import { AuthImage } from '../components/AuthImage'
 import { AuthVideo } from '../components/AuthVideo'
 import { AuthVideoThumb } from '../components/AuthVideoThumb'
+import {
+  ImageLightbox,
+  type LightboxItem,
+} from '../components/ImageLightbox'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
 import { appConfirm, appPrompt } from '../store/dialogStore'
@@ -78,9 +82,54 @@ function LibraryInner() {
     asset: Asset
     picked: Set<string>
   } | null>(null)
+  const [lightbox, setLightbox] = useState<{
+    items: LightboxItem[]
+    index: number
+    mode: 'library' | 'frames'
+  } | null>(null)
 
   const currentParentId = folder?.id ?? null
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
+
+  const openLibraryLightbox = (assetId: string) => {
+    const target = assets.find((a) => a.id === assetId)
+    if (!target) return
+    const mediaKind = target.media_kind === 'video' ? 'video' : 'image'
+    const list = assets.filter((a) => a.media_kind === mediaKind)
+    const index = list.findIndex((a) => a.id === assetId)
+    if (index < 0) return
+    setLightbox({
+      mode: 'library',
+      index,
+      items: list.map((a) => ({
+        id: a.id,
+        title: a.filename,
+        kind: a.media_kind === 'video' ? 'video' : 'image',
+        subtitle:
+          a.media_kind === 'video'
+            ? a.duration_ms != null
+              ? `${(a.duration_ms / 1000).toFixed(1)}s`
+              : '视频'
+            : a.width && a.height
+              ? `${a.width}×${a.height}`
+              : undefined,
+      })),
+    })
+  }
+
+  const openFramesLightbox = (frameId: string) => {
+    const index = frames.findIndex((f) => f.id === frameId)
+    if (index < 0) return
+    setLightbox({
+      mode: 'frames',
+      index,
+      items: frames.map((f) => ({
+        id: f.id,
+        title: f.filename || `帧 #${f.frame_index ?? '—'}`,
+        subtitle: `#${f.frame_index ?? '—'} · ${f.time_label}`,
+      })),
+    })
+  }
 
   const loadChildren = useCallback(
     async (parentId: string | null) => {
@@ -643,6 +692,13 @@ function LibraryInner() {
       )
       setFrames(fr)
       setSelected(new Set())
+      if (fr.length === 0) setLightbox(null)
+      else
+        setLightbox((prev) =>
+          prev?.mode === 'frames'
+            ? { ...prev, index: Math.min(prev.index, fr.length - 1) }
+            : prev,
+        )
       const n = result.discarded_count ?? result.deleted ?? selected.size
       appToast.success(`已删除 ${n} 帧，剩余 ${fr.length}`)
     } catch (e) {
@@ -974,16 +1030,23 @@ function LibraryInner() {
                         <button
                           type="button"
                           className="lt-media-card-main"
-                          title={a.filename}
+                          title={
+                            a.media_kind === 'video'
+                              ? `${a.filename}（点击选中并抽帧）`
+                              : `${a.filename}（点击放大）`
+                          }
                           onClick={() => {
-                            if (a.media_kind === 'video') void selectVideo(a)
-                            else {
+                            if (a.media_kind === 'video') {
+                              // 视频主路径：选中 → 右侧抽帧；播放走角标按钮
+                              void selectVideo(a)
+                            } else {
                               setSelectedImage(a)
                               setSelectedVideo(null)
                               setExtractJob(null)
                               setFrames([])
                               setVideoJobs([])
                               setStoredLibraryVideo(null, { projectId })
+                              openLibraryLightbox(a.id)
                             }
                           }}
                         >
@@ -998,6 +1061,31 @@ function LibraryInner() {
                             )}
                             {a.media_kind === 'video' && a.extracted ? (
                               <span className="lt-media-card-flag">已抽帧</span>
+                            ) : null}
+                            {a.media_kind === 'video' ? (
+                              <span
+                                className="lt-media-card-play"
+                                role="button"
+                                tabIndex={0}
+                                title="放大播放"
+                                aria-label={`放大播放 ${a.filename}`}
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  void selectVideo(a)
+                                  openLibraryLightbox(a.id)
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    void selectVideo(a)
+                                    openLibraryLightbox(a.id)
+                                  }
+                                }}
+                              >
+                                ▶
+                              </span>
                             ) : null}
                           </div>
                           <div className="lt-media-card-meta">
@@ -1034,16 +1122,35 @@ function LibraryInner() {
               <div>
                 <div
                   style={{
-                    fontSize: 13,
-                    fontWeight: 600,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
                     marginBottom: 6,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
+                    minWidth: 0,
                   }}
-                  title={selectedVideo.filename}
                 >
-                  预览 · {selectedVideo.filename}
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      flex: 1,
+                      minWidth: 0,
+                    }}
+                    title={selectedVideo.filename}
+                  >
+                    预览 · {selectedVideo.filename}
+                  </div>
+                  <button
+                    type="button"
+                    className="lt-btn"
+                    style={{ flexShrink: 0 }}
+                    onClick={() => openLibraryLightbox(selectedVideo.id)}
+                  >
+                    放大播放
+                  </button>
                 </div>
                 <AuthVideo assetId={selectedVideo.id} maxHeight={220} />
               </div>
@@ -1206,18 +1313,30 @@ function LibraryInner() {
                 ) : (
                   <div className="lt-thumb-grid lt-thumb-grid-compact">
                     {frames.map((f) => (
-                      <button
+                      <div
                         key={f.id}
-                        type="button"
                         className={`lt-thumb${selected.has(f.id) ? ' selected' : ''}`}
-                        onClick={() => toggle(f.id)}
-                        title={f.filename}
+                        title={`${f.filename}（点击放大，勾选批量删除）`}
                       >
-                        <AuthImage assetId={f.id} alt={f.time_label} />
-                        <div className="lt-thumb-meta">
-                          #{f.frame_index ?? '—'} · {f.time_label}
-                        </div>
-                      </button>
+                        <input
+                          type="checkbox"
+                          className="lt-thumb-check"
+                          checked={selected.has(f.id)}
+                          aria-label={`选中帧 ${f.frame_index ?? f.id}`}
+                          onChange={() => toggle(f.id)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <button
+                          type="button"
+                          className="lt-thumb-main"
+                          onClick={() => openFramesLightbox(f.id)}
+                        >
+                          <AuthImage assetId={f.id} alt={f.time_label} />
+                          <div className="lt-thumb-meta">
+                            #{f.frame_index ?? '—'} · {f.time_label}
+                          </div>
+                        </button>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -1238,16 +1357,24 @@ function LibraryInner() {
               >
                 预览 · {selectedImage.filename}
               </div>
-              <div
+              <button
+                type="button"
+                onClick={() => openLibraryLightbox(selectedImage.id)}
+                title="点击放大"
                 style={{
+                  display: 'block',
+                  width: '100%',
+                  padding: 0,
+                  border: 'none',
                   borderRadius: 8,
                   overflow: 'hidden',
                   background: 'var(--lt-bg-canvas)',
                   maxHeight: 360,
+                  cursor: 'zoom-in',
                 }}
               >
                 <AuthImage assetId={selectedImage.id} alt={selectedImage.filename} />
-              </div>
+              </button>
               <p
                 style={{
                   marginTop: 10,
@@ -1255,7 +1382,7 @@ function LibraryInner() {
                   color: 'var(--lt-fg-muted)',
                 }}
               >
-                上传图片可在数据集页从库勾选加入。抽帧图请选视频后在任务中查看。
+                点击图片放大浏览；可在数据集页从库勾选加入。抽帧图请选视频后在任务中查看。
               </p>
             </div>
           ) : (
@@ -1401,6 +1528,44 @@ function LibraryInner() {
             重命名
           </button>
         </div>
+      ) : null}
+      {lightbox ? (
+        <ImageLightbox
+          items={
+            lightbox.mode === 'frames'
+              ? frames.map((f) => ({
+                  id: f.id,
+                  title: f.filename || `帧 #${f.frame_index ?? '—'}`,
+                  subtitle: `#${f.frame_index ?? '—'} · ${f.time_label}`,
+                }))
+              : lightbox.items
+          }
+          index={Math.min(
+            lightbox.index,
+            Math.max(
+              0,
+              (lightbox.mode === 'frames' ? frames.length : lightbox.items.length) -
+                1,
+            ),
+          )}
+          onClose={() => setLightbox(null)}
+          onIndexChange={(index) =>
+            setLightbox((prev) => (prev ? { ...prev, index } : prev))
+          }
+          selected={
+            lightbox.mode === 'frames'
+              ? selected.has(frames[lightbox.index]?.id ?? '')
+              : undefined
+          }
+          onToggleSelect={
+            lightbox.mode === 'frames'
+              ? () => {
+                  const id = frames[lightbox.index]?.id
+                  if (id) toggle(id)
+                }
+              : undefined
+          }
+        />
       ) : null}
     </div>
   )

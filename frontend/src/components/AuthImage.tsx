@@ -11,10 +11,30 @@ export function AuthImage({ assetId, alt = '', className }: Props) {
   const { url, error } = useAuthBlobUrl(assetId)
 
   if (error) {
-    return <div className={className} style={{ background: 'var(--lt-bg-muted)' }} />
+    return (
+      <div
+        className={className}
+        style={{
+          width: '100%',
+          height: '100%',
+          minHeight: 120,
+          background: 'var(--lt-bg-muted)',
+        }}
+      />
+    )
   }
   if (!url) {
-    return <div className={className} style={{ background: 'var(--lt-bg-canvas)' }} />
+    return (
+      <div
+        className={className}
+        style={{
+          width: '100%',
+          height: '100%',
+          minHeight: 120,
+          background: 'var(--lt-bg-canvas)',
+        }}
+      />
+    )
   }
   return <img src={url} alt={alt} className={className} />
 }

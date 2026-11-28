@@ -5,6 +5,8 @@ type Props = {
   assetId: string
   className?: string
   maxHeight?: number
+  /** 仅播放器（灯箱）；默认附带截帧辅助 */
+  playerOnly?: boolean
 }
 
 function formatTime(sec: number): string {
@@ -15,7 +17,12 @@ function formatTime(sec: number): string {
 }
 
 /** 带鉴权拉取视频并本地播放；可看进度条上某一时刻的画面。 */
-export function AuthVideo({ assetId, className, maxHeight = 360 }: Props) {
+export function AuthVideo({
+  assetId,
+  className,
+  maxHeight = 360,
+  playerOnly = false,
+}: Props) {
   const { url, error, loading } = useAuthBlobUrl(assetId)
   const videoRef = useRef<HTMLVideoElement>(null)
   const [frameUrl, setFrameUrl] = useState<string | null>(null)
@@ -49,6 +56,8 @@ export function AuthVideo({ assetId, className, maxHeight = 360 }: Props) {
         className={className}
         style={{
           background: 'var(--lt-bg-muted)',
+          width: playerOnly ? '100%' : undefined,
+          height: playerOnly ? '100%' : undefined,
           minHeight: 160,
           display: 'grid',
           placeItems: 'center',
@@ -67,6 +76,8 @@ export function AuthVideo({ assetId, className, maxHeight = 360 }: Props) {
         className={className}
         style={{
           background: '#0a0a0a',
+          width: playerOnly ? '100%' : undefined,
+          height: playerOnly ? '100%' : undefined,
           minHeight: 160,
           display: 'grid',
           placeItems: 'center',
@@ -79,6 +90,48 @@ export function AuthVideo({ assetId, className, maxHeight = 360 }: Props) {
       </div>
     )
   }
+
+  const videoEl = (
+    <video
+      ref={videoRef}
+      src={url}
+      controls
+      playsInline
+      preload="metadata"
+      onSeeked={playerOnly ? undefined : grabFrame}
+      onPause={playerOnly ? undefined : grabFrame}
+      style={{
+        display: 'block',
+        width: '100%',
+        maxWidth: '100%',
+        height: playerOnly ? '100%' : 'auto',
+        maxHeight: playerOnly ? '100%' : maxHeight,
+        objectFit: playerOnly ? 'contain' : undefined,
+        background: '#000',
+        borderRadius: 'var(--lt-radius)',
+      }}
+    />
+  )
+
+  if (playerOnly) {
+    return (
+      <div
+        className={className}
+        style={{
+          minWidth: 0,
+          width: '100%',
+          height: '100%',
+          maxWidth: '100%',
+          overflow: 'hidden',
+          display: 'grid',
+          placeItems: 'center',
+        }}
+      >
+        {videoEl}
+      </div>
+    )
+  }
+
   return (
     <div
       className={className}
@@ -90,24 +143,7 @@ export function AuthVideo({ assetId, className, maxHeight = 360 }: Props) {
         overflow: 'hidden',
       }}
     >
-      <video
-        ref={videoRef}
-        src={url}
-        controls
-        playsInline
-        preload="metadata"
-        onSeeked={grabFrame}
-        onPause={grabFrame}
-        style={{
-          display: 'block',
-          width: '100%',
-          maxWidth: '100%',
-          height: 'auto',
-          maxHeight,
-          background: '#000',
-          borderRadius: 'var(--lt-radius)',
-        }}
-      />
+      {videoEl}
       <div
         style={{
           display: 'flex',
