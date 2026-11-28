@@ -4,6 +4,7 @@ import { AuthPage } from './pages/AuthPage'
 import { ProjectsPage } from './pages/ProjectsPage'
 import { LibraryPage } from './pages/LibraryPage'
 import { ClassesPage } from './pages/ClassesPage'
+import { TagsPage } from './pages/TagsPage'
 import { DatasetsPage } from './pages/DatasetsPage'
 import { AnnotatePage } from './pages/AnnotatePage'
 import { VersionsPage } from './pages/VersionsPage'
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="library" element={<LibraryPage />} />
           <Route path="classes" element={<ClassesPage />} />
+          <Route path="tags" element={<TagsPage />} />
           <Route path="datasets" element={<DatasetsPage />} />
           <Route path="annotate" element={<AnnotatePage />} />
           <Route path="versions" element={<VersionsPage />} />

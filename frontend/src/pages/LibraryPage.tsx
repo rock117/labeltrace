@@ -8,6 +8,7 @@ import type {
   ExtractJob,
   Folder,
   FrameCandidate,
+  Tag,
 } from '../lib/types'
 import { useAppStore } from '../store/appStore'
 import { formatError } from '../hooks/useAsync'
@@ -53,6 +54,7 @@ function LibraryInner() {
   const [stride, setStride] = useState(30)
   const [newFolderName, setNewFolderName] = useState('')
   const [datasets, setDatasets] = useState<Dataset[]>([])
+  const [projectTags, setProjectTags] = useState<Tag[]>([])
   const [targetDatasetId, setTargetDatasetId] = useState('')
   const [loading, setLoading] = useState(true)
   const { is, run } = useActionPending()
@@ -70,6 +72,10 @@ function LibraryInner() {
     x: number
     y: number
     folder: Folder
+  } | null>(null)
+  const [tagEditor, setTagEditor] = useState<{
+    asset: Asset
+    picked: Set<string>
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -256,11 +262,13 @@ function LibraryInner() {
         setAssets([])
 
         try {
-          const dsList = await api<Dataset[]>(
-            `/v1/projects/${projectId}/datasets`,
-          )
+          const [dsList, tagList] = await Promise.all([
+            api<Dataset[]>(`/v1/projects/${projectId}/datasets`),
+            api<Tag[]>(`/v1/projects/${projectId}/tags`),
+          ])
           if (!cancelled) {
             setDatasets(dsList)
+            setProjectTags(tagList)
             setTargetDatasetId((prev) =>
               prev && dsList.some((d) => d.id === prev)
                 ? prev
@@ -268,7 +276,7 @@ function LibraryInner() {
             )
           }
         } catch {
-          /* 数据集列表失败不阻塞素材库 */
+          /* 数据集/标签列表失败不阻塞素材库 */
         }
 
         const savedId = getStoredFolderId()
@@ -406,6 +414,43 @@ function LibraryInner() {
     } catch (e) {
       setError(formatError(e))
     }
+    })
+  }
+
+  const openTagEditor = async (asset: Asset) => {
+    setError(null)
+    try {
+      const [tagList, current] = await Promise.all([
+        projectTags.length
+          ? Promise.resolve(projectTags)
+          : api<Tag[]>(`/v1/projects/${projectId}/tags`),
+        api<Tag[]>(`/v1/assets/${asset.id}/tags`),
+      ])
+      setProjectTags(tagList)
+      setTagEditor({
+        asset,
+        picked: new Set(current.map((t) => t.id)),
+      })
+    } catch (e) {
+      setError(formatError(e))
+    }
+  }
+
+  const saveAssetTags = async () => {
+    if (!tagEditor) return
+    const { asset, picked } = tagEditor
+    setError(null)
+    await run(`tags:${asset.id}`, async () => {
+      try {
+        await api(`/v1/assets/${asset.id}/tags`, {
+          method: 'PUT',
+          body: JSON.stringify({ tag_ids: [...picked] }),
+        })
+        setTagEditor(null)
+        setMessage(`已更新「${asset.filename}」的标签`)
+      } catch (e) {
+        setError(formatError(e))
+      }
     })
   }
 
@@ -928,7 +973,7 @@ function LibraryInner() {
                         onContextMenu={(e) => {
                           e.preventDefault()
                           const menuW = 148
-                          const menuH = 76
+                          const menuH = 108
                           setFolderMenu(null)
                           setAssetMenu({
                             asset: a,
@@ -1257,6 +1302,16 @@ function LibraryInner() {
           </button>
           <button
             type="button"
+            onClick={() => {
+              const asset = assetMenu.asset
+              setAssetMenu(null)
+              void openTagEditor(asset)
+            }}
+          >
+            打标签
+          </button>
+          <button
+            type="button"
             className="danger"
             onClick={() => {
               const asset = assetMenu.asset
@@ -1266,6 +1321,83 @@ function LibraryInner() {
           >
             删除
           </button>
+        </div>
+      ) : null}
+      {tagEditor ? (
+        <div
+          className="lt-panel"
+          style={{
+            position: 'fixed',
+            left: '50%',
+            top: '20%',
+            transform: 'translateX(-50%)',
+            zIndex: 40,
+            padding: '1rem',
+            minWidth: 280,
+            maxWidth: '90vw',
+            boxShadow: '0 8px 28px rgba(0,0,0,0.18)',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem' }}>
+            打标签 · {tagEditor.asset.filename}
+          </h3>
+          {projectTags.length === 0 ? (
+            <p style={{ margin: '0 0 0.75rem', fontSize: 13 }}>
+              还没有标签。请先到{' '}
+              <Link to="/tags">标签</Link> 页创建。
+            </p>
+          ) : (
+            <div style={{ display: 'grid', gap: 6, marginBottom: 12 }}>
+              {projectTags.map((t) => {
+                const on = tagEditor.picked.has(t.id)
+                return (
+                  <label
+                    key={t.id}
+                    style={{
+                      display: 'inline-flex',
+                      gap: 6,
+                      alignItems: 'center',
+                      cursor: 'pointer',
+                      fontSize: 13,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() =>
+                        setTagEditor((prev) => {
+                          if (!prev) return prev
+                          const next = new Set(prev.picked)
+                          if (on) next.delete(t.id)
+                          else next.add(t.id)
+                          return { ...prev, picked: next }
+                        })
+                      }
+                    />
+                    {t.name}
+                  </label>
+                )
+              })}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              className="lt-btn"
+              onClick={() => setTagEditor(null)}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="lt-btn lt-btn-primary"
+              disabled={is(`tags:${tagEditor.asset.id}`) || projectTags.length === 0}
+              onClick={() => void saveAssetTags()}
+            >
+              保存
+            </button>
+          </div>
         </div>
       ) : null}
       {folderMenu ? (

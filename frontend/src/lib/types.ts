@@ -90,6 +90,20 @@ export type ProjectClass = {
   color?: string | null
 }
 
+export type Tag = {
+  id: string
+  project_id: string
+  name: string
+}
+
+/** 按标签筛选返回的库可见素材摘要 */
+export type TaggedAsset = {
+  id: string
+  filename: string
+  media_kind: 'image' | 'video' | string
+  folder_id: string | null
+}
+
 export type DatasetClass = {
   id: string
   name: string

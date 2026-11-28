@@ -6,6 +6,7 @@ import './shell.css'
 const nav = [
   { to: '/library', label: '素材库' },
   { to: '/classes', label: 'YOLO类别' },
+  { to: '/tags', label: '标签' },
   { to: '/datasets', label: '数据集' },
   { to: '/annotate', label: '标注台' },
   { to: '/versions', label: '版本' },
