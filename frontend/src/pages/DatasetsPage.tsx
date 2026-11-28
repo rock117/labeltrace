@@ -12,6 +12,7 @@ import type {
 } from '../lib/types'
 import { useAppStore } from '../store/appStore'
 import { formatError } from '../hooks/useAsync'
+import { useActionPending } from '../hooks/useActionPending'
 import { AuthImage } from '../components/AuthImage'
 import { AuthVideoThumb } from '../components/AuthVideoThumb'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
@@ -52,7 +53,7 @@ function DatasetsInner() {
   const [sources, setSources] = useState<MemberSource[]>([])
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState(false)
+  const { is, run } = useActionPending()
   const [importName, setImportName] = useState('')
   const [projectClasses, setProjectClasses] = useState<ProjectClass[]>([])
   const [enabledIds, setEnabledIds] = useState<string[]>([])
@@ -100,24 +101,25 @@ function DatasetsInner() {
     [loadExtractJobs, projectId],
   )
 
-  const saveEnabledClasses = async () => {
+  const saveEnabledClasses = async (classIds: string[]) => {
     if (!active) return
-    setBusy(true)
+    const prev = enabledIds
+    setEnabledIds(classIds)
     setError(null)
-    try {
-      const ds = await api<Dataset>(`/v1/datasets/${active.id}/classes`, {
-        method: 'PUT',
-        body: JSON.stringify({ classIds: enabledIds }),
-      })
-      setActive(ds)
-      setEnabledIds(ds.classes.map((c) => c.id))
-      setDatasets((prev) => prev.map((d) => (d.id === ds.id ? ds : d)))
-      setMessage(`已更新启用类别（${ds.classes.length}）`)
-    } catch (e) {
-      setError(formatError(e))
-    } finally {
-      setBusy(false)
-    }
+    await run('classes', async () => {
+      try {
+        const ds = await api<Dataset>(`/v1/datasets/${active.id}/classes`, {
+          method: 'PUT',
+          body: JSON.stringify({ classIds }),
+        })
+        setActive(ds)
+        setEnabledIds(ds.classes.map((c) => c.id))
+        setDatasets((prevDs) => prevDs.map((d) => (d.id === ds.id ? ds : d)))
+      } catch (e) {
+        setEnabledIds(prev)
+        setError(formatError(e))
+      }
+    })
   }
 
   const reload = useCallback(async () => {
@@ -166,8 +168,8 @@ function DatasetsInner() {
 
   const create = async () => {
     if (!name.trim()) return
-    setBusy(true)
     setError(null)
+    await run('create', async () => {
     try {
       const ds = await api<Dataset>(`/v1/projects/${projectId}/datasets`, {
         method: 'POST',
@@ -182,16 +184,15 @@ function DatasetsInner() {
       setMessage(`已创建数据集 ${ds.name}`)
     } catch (e) {
       setError(formatError(e))
-    } finally {
-      setBusy(false)
     }
+    })
   }
 
   const importYoloZip = async (file: File) => {
     const dsName = importName.trim() || file.name.replace(/\.zip$/i, '') || 'imported'
-    setBusy(true)
     setError(null)
     setMessage(`正在导入 ${file.name}…`)
+    await run('import', async () => {
     try {
       const fd = new FormData()
       fd.append('file', file)
@@ -229,9 +230,8 @@ function DatasetsInner() {
     } catch (e) {
       setError(formatError(e))
       setMessage(null)
-    } finally {
-      setBusy(false)
     }
+    })
   }
 
   const toggleJob = (id: string) => {
@@ -245,8 +245,8 @@ function DatasetsInner() {
 
   const addFromExtractJobs = async () => {
     if (!active || pickedJobs.size === 0) return
-    setBusy(true)
     setError(null)
+    await run('add-extract', async () => {
     try {
       const before = members.length
       const jobIds = [...pickedJobs]
@@ -271,9 +271,8 @@ function DatasetsInner() {
       )
     } catch (e) {
       setError(formatError(e))
-    } finally {
-      setBusy(false)
     }
+    })
   }
 
   const loadLibraryImages = useCallback(async (folderId: string) => {
@@ -319,8 +318,8 @@ function DatasetsInner() {
     if (next == null) return
     const name = next.trim()
     if (!name || name === active.name) return
-    setBusy(true)
     setError(null)
+    await run('rename', async () => {
     try {
       const ds = await api<Dataset>(`/v1/datasets/${active.id}`, {
         method: 'PATCH',
@@ -331,9 +330,8 @@ function DatasetsInner() {
       setMessage(`已重命名为 ${ds.name}`)
     } catch (e) {
       setError(formatError(e))
-    } finally {
-      setBusy(false)
     }
+    })
   }
 
   const toggleMember = (assetId: string) => {
@@ -363,8 +361,8 @@ function DatasetsInner() {
       danger: true,
     })
     if (!ok) return
-    setBusy(true)
     setError(null)
+    await run('remove-members', async () => {
     try {
       for (const assetId of pickedMembers) {
         await api(`/v1/datasets/${active.id}/assets/${assetId}`, {
@@ -375,9 +373,8 @@ function DatasetsInner() {
       setMessage(`已移出 ${n} 张`)
     } catch (e) {
       setError(formatError(e))
-    } finally {
-      setBusy(false)
     }
+    })
   }
 
   const addFromLibrary = async () => {
@@ -386,8 +383,8 @@ function DatasetsInner() {
       setError('请先勾选素材库中的图片')
       return
     }
-    setBusy(true)
     setError(null)
+    await run('add-library', async () => {
     try {
       const added = await api<DatasetAsset[]>(`/v1/datasets/${active.id}/assets`, {
         method: 'POST',
@@ -401,9 +398,8 @@ function DatasetsInner() {
       setMessage(`已从素材库加入 ${added.length} 张`)
     } catch (e) {
       setError(formatError(e))
-    } finally {
-      setBusy(false)
     }
+    })
   }
 
   if (loading) return <LoadingBlock />
@@ -439,7 +435,7 @@ function DatasetsInner() {
           <button
             type="button"
             className="lt-btn lt-btn-primary"
-            disabled={busy || !name.trim()}
+            disabled={is('create') || !name.trim()}
             onClick={() => void create()}
           >
             创建
@@ -466,12 +462,12 @@ function DatasetsInner() {
             onChange={(e) => setImportName(e.target.value)}
             style={{ maxWidth: 260 }}
           />
-          <label className="lt-btn" style={{ cursor: busy ? 'not-allowed' : 'pointer' }}>
-            {busy ? '处理中…' : '选择 zip'}
+          <label className="lt-btn" style={{ cursor: is('import') ? 'not-allowed' : 'pointer' }}>
+            {is('import') ? '处理中…' : '选择 zip'}
             <input
               type="file"
               accept=".zip,application/zip"
-              disabled={busy}
+              disabled={is('import')}
               style={{ display: 'none' }}
               onChange={(e) => {
                 const f = e.target.files?.[0]
@@ -542,7 +538,7 @@ function DatasetsInner() {
                     <button
                       type="button"
                       className="lt-btn"
-                      disabled={busy}
+                      disabled={is('rename')}
                       onClick={() => void renameDataset()}
                     >
                       重命名
@@ -567,7 +563,7 @@ function DatasetsInner() {
               </div>
 
               <div className="lt-panel" style={{ padding: '1rem', marginBottom: '1rem' }}>
-                <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem' }}>启用类别</h3>
+                <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem' }}>类别</h3>
                 <p
                   style={{
                     margin: '0 0 0.75rem',
@@ -575,114 +571,56 @@ function DatasetsInner() {
                     color: 'var(--lt-fg-muted)',
                   }}
                 >
-                  类别在项目里创建。这里只选择本数据集用哪些，并排好导出顺序。改名在项目页，框仍引用同一个 id。仍被本集标注引用的类别不能停用。导出 YOLO 时按此顺序编号 0..n-1。
+                  默认全部启用。勾选只表示本数据集用不用这个类别，没有编号。仍被本集标注引用的类别不能取消。编号在发版时才生成。
                 </p>
                 {projectClasses.length === 0 ? (
-                  <p style={{ margin: '0 0 0.75rem', fontSize: 13 }}>
-                    项目还没有类别。请先到项目页创建，再回到这里启用。
+                  <p style={{ margin: 0, fontSize: 13 }}>
+                    项目还没有类别。请先到 YOLO类别页创建。
                   </p>
-                ) : null}
-                <div style={{ display: 'grid', gap: 6 }}>
-                  {enabledIds.map((id, i) => {
-                    const cls = projectClasses.find((c) => c.id === id)
-                    return (
-                      <div
-                        key={id}
-                        style={{
-                          display: 'flex',
-                          gap: 8,
-                          flexWrap: 'wrap',
-                          alignItems: 'center',
-                        }}
-                      >
-                        <span className="mono" style={{ width: 24, opacity: 0.6 }}>
-                          {i}
-                        </span>
-                        <span
+                ) : (
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    {projectClasses.map((cls) => {
+                      const checked = enabledIds.includes(cls.id)
+                      return (
+                        <label
+                          key={cls.id}
                           style={{
-                            width: 14,
-                            height: 14,
-                            borderRadius: 3,
-                            background: cls?.color || '#0f766e',
+                            display: 'flex',
+                            gap: 8,
+                            alignItems: 'center',
+                            cursor: is('classes') ? 'default' : 'pointer',
                           }}
-                        />
-                        <span style={{ minWidth: 80 }}>{cls?.name ?? id.slice(0, 8)}</span>
-                        <button
-                          type="button"
-                          className="lt-btn"
-                          disabled={busy || i === 0}
-                          onClick={() =>
-                            setEnabledIds((prev) => {
-                              const next = [...prev]
-                              ;[next[i - 1], next[i]] = [next[i], next[i - 1]]
-                              return next
-                            })
-                          }
                         >
-                          上移
-                        </button>
-                        <button
-                          type="button"
-                          className="lt-btn"
-                          disabled={busy || i >= enabledIds.length - 1}
-                          onClick={() =>
-                            setEnabledIds((prev) => {
-                              const next = [...prev]
-                              ;[next[i], next[i + 1]] = [next[i + 1], next[i]]
-                              return next
-                            })
-                          }
-                        >
-                          下移
-                        </button>
-                        <button
-                          type="button"
-                          className="lt-btn lt-btn-danger"
-                          disabled={busy}
-                          onClick={() =>
-                            setEnabledIds((prev) => prev.filter((x) => x !== id))
-                          }
-                        >
-                          停用
-                        </button>
-                      </div>
-                    )
-                  })}
-                </div>
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: 8,
-                    flexWrap: 'wrap',
-                    marginTop: 10,
-                    alignItems: 'center',
-                  }}
-                >
-                  {projectClasses
-                    .filter((c) => !enabledIds.includes(c.id))
-                    .map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        className="lt-btn"
-                        disabled={busy}
-                        onClick={() => setEnabledIds((prev) => [...prev, c.id])}
-                      >
-                        启用 {c.name}
-                      </button>
-                    ))}
-                  <button
-                    type="button"
-                    className="lt-btn lt-btn-primary"
-                    disabled={busy}
-                    onClick={() => void saveEnabledClasses()}
-                  >
-                    保存启用顺序
-                  </button>
-                  <Link to="/projects" className="lt-btn">
-                    去项目页管理类别
-                  </Link>
-                </div>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={is('classes')}
+                            onChange={() => {
+                              const next = checked
+                                ? enabledIds.filter((id) => id !== cls.id)
+                                : [...enabledIds, cls.id]
+                              void saveEnabledClasses(next)
+                            }}
+                          />
+                          <span
+                            style={{
+                              width: 14,
+                              height: 14,
+                              borderRadius: 3,
+                              background: cls.color || '#0f766e',
+                            }}
+                          />
+                          <span>{cls.name}</span>
+                        </label>
+                      )
+                    })}
+                    <div>
+                      <Link to="/classes" className="lt-btn">
+                        去 YOLO类别
+                      </Link>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="lt-panel" style={{ padding: '1rem', marginBottom: '1rem' }}>
@@ -713,7 +651,7 @@ function DatasetsInner() {
                   <button
                     type="button"
                     className="lt-btn lt-btn-primary"
-                    disabled={busy || pickedJobs.size === 0}
+                    disabled={is('add-extract') || pickedJobs.size === 0}
                     onClick={() => void addFromExtractJobs()}
                   >
                     加入所选任务（{pickedJobs.size}）
@@ -820,7 +758,7 @@ function DatasetsInner() {
                         <button
                           type="button"
                           className="lt-btn lt-btn-primary"
-                          disabled={busy || picked.size === 0}
+                          disabled={is('add-library') || picked.size === 0}
                           onClick={() => void addFromLibrary()}
                         >
                           加入所选（{picked.size}）
@@ -934,7 +872,6 @@ function DatasetsInner() {
                       <button
                         type="button"
                         className="lt-btn"
-                        disabled={busy}
                         onClick={toggleAllMembers}
                       >
                         {pickedMembers.size === members.length
@@ -944,7 +881,7 @@ function DatasetsInner() {
                       <button
                         type="button"
                         className="lt-btn lt-btn-danger"
-                        disabled={busy || pickedMembers.size === 0}
+                        disabled={is('remove-members') || pickedMembers.size === 0}
                         onClick={() => void removeSelectedMembers()}
                       >
                         移出所选（{pickedMembers.size}）

@@ -11,6 +11,7 @@ import type {
 } from '../lib/types'
 import { useAppStore } from '../store/appStore'
 import { formatError } from '../hooks/useAsync'
+import { useActionPending } from '../hooks/useActionPending'
 import { AuthImage } from '../components/AuthImage'
 import { AuthVideo } from '../components/AuthVideo'
 import { AuthVideoThumb } from '../components/AuthVideoThumb'
@@ -54,7 +55,7 @@ function LibraryInner() {
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [targetDatasetId, setTargetDatasetId] = useState('')
   const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState(false)
+  const { is, run } = useActionPending()
   const [uploadProgress, setUploadProgress] = useState<{
     index: number
     total: number
@@ -305,33 +306,31 @@ function LibraryInner() {
     setFrames([])
     setVideoJobs([])
     if (kind !== 'video') setStoredLibraryVideo(null, { projectId })
-    setBusy(true)
-    try {
-      await loadAssetsPage(folder.id, kind, 0)
-    } catch (e) {
-      setError(formatError(e))
-    } finally {
-      setBusy(false)
-    }
+    await run('assets', async () => {
+      try {
+        await loadAssetsPage(folder.id, kind, 0)
+      } catch (e) {
+        setError(formatError(e))
+      }
+    })
   }
 
   const goPage = async (nextPage: number) => {
     if (!folder || nextPage < 0 || nextPage >= pageCount) return
-    setBusy(true)
-    try {
-      await loadAssetsPage(folder.id, browseKind, nextPage)
-    } catch (e) {
-      setError(formatError(e))
-    } finally {
-      setBusy(false)
-    }
+    await run('assets', async () => {
+      try {
+        await loadAssetsPage(folder.id, browseKind, nextPage)
+      } catch (e) {
+        setError(formatError(e))
+      }
+    })
   }
 
   const createFolder = async () => {
     const name = newFolderName.trim()
     if (!name) return
-    setBusy(true)
     setError(null)
+    await run('create-folder', async () => {
     try {
       const created = await api<Folder>(`/v1/projects/${projectId}/folders`, {
         method: 'POST',
@@ -345,9 +344,8 @@ function LibraryInner() {
       await enterFolder(created, [...trail, created])
     } catch (e) {
       setError(formatError(e))
-    } finally {
-      setBusy(false)
     }
+    })
   }
 
   const renameFolder = async (target: Folder) => {
@@ -360,8 +358,8 @@ function LibraryInner() {
     if (next == null) return
     const name = next.trim()
     if (!name || name === target.name) return
-    setBusy(true)
     setError(null)
+    await run('rename-folder', async () => {
     try {
       const updated = await api<Folder>(`/v1/folders/${target.id}`, {
         method: 'PATCH',
@@ -380,9 +378,8 @@ function LibraryInner() {
       }
     } catch (e) {
       setError(formatError(e))
-    } finally {
-      setBusy(false)
     }
+    })
   }
 
   const renameAsset = async (asset: Asset) => {
@@ -395,8 +392,8 @@ function LibraryInner() {
     if (next == null) return
     const filename = next.trim()
     if (!filename || filename === asset.filename) return
-    setBusy(true)
     setError(null)
+    await run(`rename-asset:${asset.id}`, async () => {
     try {
       const updated = await api<Asset>(`/v1/assets/${asset.id}`, {
         method: 'PATCH',
@@ -408,9 +405,8 @@ function LibraryInner() {
       setMessage(`已重命名：${updated.filename}`)
     } catch (e) {
       setError(formatError(e))
-    } finally {
-      setBusy(false)
     }
+    })
   }
 
   const deleteAsset = async (asset: Asset) => {
@@ -421,8 +417,8 @@ function LibraryInner() {
       danger: true,
     })
     if (!ok) return
-    setBusy(true)
     setError(null)
+    await run(`delete-asset:${asset.id}`, async () => {
     try {
       await api(`/v1/assets/${asset.id}`, { method: 'DELETE' })
       if (selectedVideo?.id === asset.id) {
@@ -437,9 +433,8 @@ function LibraryInner() {
       setMessage(`已删除：${asset.filename}`)
     } catch (e) {
       setError(formatError(e))
-    } finally {
-      setBusy(false)
     }
+    })
   }
 
   useEffect(() => {
@@ -468,10 +463,10 @@ function LibraryInner() {
     }
     const list = Array.from(files)
     if (list.length === 0) return
-    setBusy(true)
     setError(null)
     setMessage(null)
     setUploadProgress({ index: 0, total: list.length, name: list[0].name })
+    await run('upload', async () => {
     try {
       let lastVideo: Asset | null = null
       let nImg = 0
@@ -519,17 +514,17 @@ function LibraryInner() {
       setError(formatError(e))
     } finally {
       setUploadProgress(null)
-      setBusy(false)
     }
+    })
   }
 
   const startExtract = async () => {
     if (!selectedVideo) return
-    setBusy(true)
     setError(null)
     setMessage('抽帧任务已提交…')
     setFrames([])
     setSelected(new Set())
+    await run('extract', async () => {
     try {
       const job = await api<ExtractJob>(
         `/v1/assets/${selectedVideo.id}/extract-jobs`,
@@ -552,9 +547,8 @@ function LibraryInner() {
     } catch (e) {
       setError(formatError(e))
       setMessage(null)
-    } finally {
-      setBusy(false)
     }
+    })
   }
 
   const pollExtract = async (id: string) => {
@@ -600,8 +594,8 @@ function LibraryInner() {
 
   const discardSelected = async () => {
     if (!extractJob || selected.size === 0) return
-    setBusy(true)
     setError(null)
+    await run('discard', async () => {
     try {
       const result = await api<{ discarded_count?: number; deleted?: number }>(
         `/v1/extract-jobs/${extractJob.id}/frames/batch-delete`,
@@ -619,15 +613,14 @@ function LibraryInner() {
       setMessage(`已删除 ${n} 帧，剩余 ${fr.length}`)
     } catch (e) {
       setError(formatError(e))
-    } finally {
-      setBusy(false)
     }
+    })
   }
 
   const addCurrentJobToDataset = async () => {
     if (!extractJob || !targetDatasetId || frames.length === 0) return
-    setBusy(true)
     setError(null)
+    await run('add-frames', async () => {
     try {
       const added = await api<{ asset_id: string }[]>(
         `/v1/datasets/${targetDatasetId}/assets/from-extract`,
@@ -644,9 +637,8 @@ function LibraryInner() {
       setMessage(`已将当前任务 ${added.length} 帧加入「${dsName}」`)
     } catch (e) {
       setError(formatError(e))
-    } finally {
-      setBusy(false)
     }
+    })
   }
 
   if (loading) return <LoadingBlock />
@@ -663,9 +655,9 @@ function LibraryInner() {
         <label
           className="lt-btn lt-btn-primary"
           style={{
-            cursor: folder && !busy ? 'pointer' : 'not-allowed',
+            cursor: folder && !uploadProgress ? 'pointer' : 'not-allowed',
             opacity: folder && !uploadProgress ? 1 : 0.65,
-            pointerEvents: busy ? 'none' : undefined,
+            pointerEvents: uploadProgress ? 'none' : undefined,
           }}
           title={
             uploadProgress
@@ -683,7 +675,7 @@ function LibraryInner() {
             accept="video/*,image/*"
             multiple
             hidden
-            disabled={busy || !folder}
+            disabled={!folder || uploadProgress != null}
             onChange={(e) => {
               if (e.target.files?.length) void upload(e.target.files)
               e.target.value = ''
@@ -758,7 +750,7 @@ function LibraryInner() {
         <button
           type="button"
           className="lt-btn"
-          disabled={busy || !newFolderName.trim()}
+          disabled={is('create-folder') || !newFolderName.trim()}
           onClick={() => void createFolder()}
         >
           新建目录
@@ -767,7 +759,7 @@ function LibraryInner() {
           <button
             type="button"
             className="lt-btn"
-            disabled={busy}
+            disabled={is('rename-folder')}
             onClick={() => void renameFolder(folder)}
           >
             重命名当前目录
@@ -794,7 +786,6 @@ function LibraryInner() {
                   key={f.id}
                   onContextMenu={(e) => {
                     e.preventDefault()
-                    if (busy) return
                     setAssetMenu(null)
                     setFolderMenu({
                       folder: f,
@@ -900,7 +891,7 @@ function LibraryInner() {
                 <button
                   type="button"
                   className="lt-btn"
-                  disabled={busy || page <= 0}
+                  disabled={is('assets') || page <= 0}
                   onClick={() => void goPage(page - 1)}
                 >
                   上一页
@@ -908,7 +899,7 @@ function LibraryInner() {
                 <button
                   type="button"
                   className="lt-btn"
-                  disabled={busy || page + 1 >= pageCount}
+                  disabled={is('assets') || page + 1 >= pageCount}
                   onClick={() => void goPage(page + 1)}
                 >
                   下一页
@@ -936,7 +927,6 @@ function LibraryInner() {
                         className={`lt-media-card${isActive ? ' selected' : ''}`}
                         onContextMenu={(e) => {
                           e.preventDefault()
-                          if (busy) return
                           const menuW = 148
                           const menuH = 76
                           setFolderMenu(null)
@@ -1044,7 +1034,7 @@ function LibraryInner() {
               <button
                 type="button"
                 className="lt-btn lt-btn-primary"
-                disabled={busy}
+                disabled={is('extract')}
                 onClick={() => void startExtract()}
               >
                 开始抽帧
@@ -1130,7 +1120,7 @@ function LibraryInner() {
                     <button
                       type="button"
                       className="lt-btn lt-btn-danger"
-                      disabled={busy || selected.size === 0}
+                      disabled={is('discard') || selected.size === 0}
                       onClick={() => void discardSelected()}
                     >
                       删除所选
@@ -1171,7 +1161,7 @@ function LibraryInner() {
                         <button
                           type="button"
                           className="lt-btn lt-btn-primary"
-                          disabled={busy || !targetDatasetId}
+                          disabled={is('add-frames') || !targetDatasetId}
                           onClick={() => void addCurrentJobToDataset()}
                         >
                           将当前任务剩余帧入集
@@ -1257,7 +1247,6 @@ function LibraryInner() {
         >
           <button
             type="button"
-            disabled={busy}
             onClick={() => {
               const asset = assetMenu.asset
               setAssetMenu(null)
@@ -1269,7 +1258,6 @@ function LibraryInner() {
           <button
             type="button"
             className="danger"
-            disabled={busy}
             onClick={() => {
               const asset = assetMenu.asset
               setAssetMenu(null)
@@ -1289,7 +1277,6 @@ function LibraryInner() {
         >
           <button
             type="button"
-            disabled={busy}
             onClick={() => {
               const target = folderMenu.folder
               setFolderMenu(null)

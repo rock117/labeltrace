@@ -27,7 +27,11 @@ from app.models.asset import Asset
 from app.models.dataset import Dataset, DatasetAsset
 from app.models.frame_extract_job import FrameExtractJob
 from app.models.project import Membership
-from app.services.project_classes import classes_as_dicts, set_dataset_class_ids
+from app.services.project_classes import (
+    classes_as_dicts,
+    enable_all_project_classes,
+    set_dataset_class_ids,
+)
 
 router = APIRouter(tags=["datasets"])
 logger = get_logger("labeltrace.api.datasets")
@@ -125,6 +129,8 @@ def create_dataset(
         enabled_annotation_types=types,
     )
     db.add(ds)
+    db.flush()
+    enable_all_project_classes(db, ds.id, project_id)
     db.commit()
     db.refresh(ds)
     logger.info("dataset_created dataset_id=%s", ds.id)

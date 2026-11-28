@@ -405,7 +405,7 @@ P0 默认：**导入到新建数据集**（实现简单）；导入到已有空�
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET/POST/PATCH/DELETE | `/projects/{projectId}/classes` | 项目词表。同名 409；删除时仍被选用、标注引用或已入版本 → 409 |
-| POST | `/projects/{projectId}/datasets` | `{ name, enabledAnnotationTypes?: ["rect"] }`；启用类别为空 |
+| POST | `/projects/{projectId}/datasets` | `{ name, enabledAnnotationTypes?: ["rect"] }`；默认启用当时项目词表的全部类别 |
 | GET | `/datasets/{datasetId}` | 含已启用 `classes: [{id,name,idx,color?}]`（id 为项目类别）、`enabledAnnotationTypes` |
 | PUT | `/datasets/{datasetId}/classes` | `{ classIds: uuid[] }` 按顺序启用词表子集；停用仍被本集标注引用的类别 → 409 |
 | PATCH | `/datasets/{datasetId}` | 可改启用类型（需校验策略） |

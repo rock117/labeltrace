@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -113,6 +113,41 @@ def referenced_class_ids(db: Session, dataset_id: UUID) -> set[str]:
     return found
 
 
+def _append_class_to_datasets(db: Session, project_id: UUID, class_id: UUID) -> None:
+    """新建类别默认追加到该项目每个数据集的启用列表末尾。"""
+    dataset_ids = list(
+        db.scalars(select(Dataset.id).where(Dataset.project_id == project_id)).all()
+    )
+    for dataset_id in dataset_ids:
+        linked = db.scalar(
+            select(DatasetClassRef.class_id).where(
+                DatasetClassRef.dataset_id == dataset_id,
+                DatasetClassRef.class_id == class_id,
+            )
+        )
+        if linked is not None:
+            continue
+        max_idx = db.scalar(
+            select(func.max(DatasetClassRef.idx)).where(
+                DatasetClassRef.dataset_id == dataset_id
+            )
+        )
+        db.add(
+            DatasetClassRef(
+                dataset_id=dataset_id,
+                class_id=class_id,
+                idx=0 if max_idx is None else int(max_idx) + 1,
+            )
+        )
+    db.flush()
+
+
+def enable_all_project_classes(db: Session, dataset_id: UUID, project_id: UUID) -> None:
+    """数据集创建时按词表顺序启用当时的全部类别。"""
+    class_ids = [row.id for row in list_project_classes(db, project_id)]
+    _replace_refs(db, dataset_id, class_ids)
+
+
 def _replace_refs(db: Session, dataset_id: UUID, class_ids: list[UUID]) -> None:
     existing = list(
         db.scalars(
@@ -211,6 +246,7 @@ def ensure_classes_from_names(
             row = ProjectClass(project_id=ds.project_id, name=name, color=None)
             db.add(row)
             db.flush()
+            _append_class_to_datasets(db, ds.project_id, row.id)
         ordered.append(row.id)
     _replace_refs(db, dataset_id, ordered)
     return [str(cid) for cid in ordered]
@@ -268,6 +304,8 @@ def create_project_class(
     )
     db.add(row)
     try:
+        db.flush()
+        _append_class_to_datasets(db, project_id, row.id)
         db.commit()
     except IntegrityError:
         db.rollback()

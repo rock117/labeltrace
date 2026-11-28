@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { api, getToken } from '../lib/api'
 import type { Dataset, Version } from '../lib/types'
 import { formatError } from '../hooks/useAsync'
+import { useActionPending } from '../hooks/useActionPending'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
 import { useAppStore } from '../store/appStore'
@@ -35,7 +36,7 @@ function VersionsInner() {
   const [splitTest, setSplitTest] = useState(0.1)
   const [splitSeed, setSplitSeed] = useState(42)
   const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState(false)
+  const { is, run } = useActionPending()
   const [exportingId, setExportingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -136,9 +137,9 @@ function VersionsInner() {
       confirmLabel: '应用',
     })
     if (!ok) return
-    setBusy(true)
     setError(null)
     setMessage(null)
+    await run(`apply:${versionId}`, async () => {
     try {
       const r = await api<{
         added: number
@@ -156,9 +157,8 @@ function VersionsInner() {
       )
     } catch (e) {
       setError(formatError(e))
-    } finally {
-      setBusy(false)
     }
+    })
   }
 
   const reload = useCallback(async (id: string) => {
@@ -200,9 +200,9 @@ function VersionsInner() {
 
   const publish = async () => {
     if (!datasetId || !name.trim() || !splitOk) return
-    setBusy(true)
     setError(null)
     setMessage(null)
+    await run('publish', async () => {
     try {
       const parent = versions[0]?.id ?? null
       const ver = await api<Version>(`/v1/datasets/${datasetId}/versions`, {
@@ -225,9 +225,8 @@ function VersionsInner() {
       await reload(datasetId)
     } catch (e) {
       setError(formatError(e))
-    } finally {
-      setBusy(false)
     }
+    })
   }
 
   if (!datasetId) {
@@ -252,8 +251,7 @@ function VersionsInner() {
         <div>
           <h1>版本</h1>
           <p>
-            {dataset?.name ?? '数据集'} · 全部成员须已「提交」标注后方可发版；发版时按比例随机划分
-            train/val/test；导出为该版本的 YOLO detect zip。
+            {dataset?.name ?? '数据集'} · 全部成员须已「提交」标注后方可发版。发版时才给仍启用的类别编 0、1、2…（按它们加入本数据集的先后；导入包沿用包内顺序），并按比例随机划分 train/val/test。导出使用该版本冻结的编号。
           </p>
         </div>
         <Link to={`/annotate?dataset=${datasetId}`} className="lt-btn">
@@ -346,10 +344,10 @@ function VersionsInner() {
           <button
             type="button"
             className="lt-btn lt-btn-primary"
-            disabled={busy || !name.trim() || !splitOk}
+            disabled={is('publish') || !name.trim() || !splitOk}
             onClick={() => void publish()}
           >
-            {busy ? '发版中…' : '发布版本'}
+            {is('publish') ? '发版中…' : '发布版本'}
           </button>
         </div>
         <p style={{ margin: '0.65rem 0 0', color: 'var(--lt-fg-subtle)', fontSize: 13 }}>
@@ -412,7 +410,7 @@ function VersionsInner() {
                   <button
                     type="button"
                     className="lt-btn lt-btn-primary"
-                    disabled={busy || exportingId === v.id}
+                    disabled={exportingId === v.id}
                     onClick={() => void exportYolo(v.id, v.name)}
                   >
                     {exportingId === v.id ? '导出中…' : '导出 YOLO'}
@@ -420,7 +418,7 @@ function VersionsInner() {
                   <button
                     type="button"
                     className="lt-btn"
-                    disabled={busy || exportingId != null}
+                    disabled={is(`apply:${v.id}`)}
                     onClick={() => void applyToWorkspace(v.id, v.name)}
                   >
                     应用到工作区
@@ -453,6 +451,18 @@ function VersionsInner() {
                   </p>
                 )
               })()}
+              {v.classes.length > 0 ? (
+                <p
+                  style={{
+                    margin: '0.65rem 0 0',
+                    fontSize: 13,
+                    color: 'var(--lt-fg-muted)',
+                  }}
+                >
+                  类别编号{' '}
+                  {v.classes.map((c, i) => `${i} ${c.name}`).join(' · ')}
+                </p>
+              ) : null}
               {Array.isArray(v.member_sources) && v.member_sources.length > 0 ? (
                 <p
                   style={{

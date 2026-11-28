@@ -302,8 +302,20 @@ def test_annotation_isolation_publish_and_lineage() -> None:
             headers=_h("admin"),
         )
         assert spare.status_code == 201, spare.text
+        spare_id = spare.json()["id"]
+        for did in (d1, d2):
+            current = client.get(
+                f"/api/v1/datasets/{did}", headers=_h("admin")
+            ).json()["classes"]
+            assert any(c["id"] == spare_id for c in current)
+            cleared = client.put(
+                f"/api/v1/datasets/{did}/classes",
+                json={"classIds": [c["id"] for c in current if c["id"] != spare_id]},
+                headers=_h("admin"),
+            )
+            assert cleared.status_code == 200, cleared.text
         removed = client.delete(
-            f"/api/v1/projects/{pid}/classes/{spare.json()['id']}",
+            f"/api/v1/projects/{pid}/classes/{spare_id}",
             headers=_h("admin"),
         )
         assert removed.status_code == 204, removed.text
@@ -314,3 +326,36 @@ def test_annotation_isolation_publish_and_lineage() -> None:
         assert body["origin"] == "upload"
         assert len(body["datasets"]) >= 1
         assert len(body["versions"]) >= 1
+
+
+def test_new_dataset_enables_all_project_classes() -> None:
+    with TestClient(app) as client:
+        pid = client.post(
+            "/api/v1/projects", json={"name": "默认全选"}, headers=_h("admin")
+        ).json()["id"]
+        c1 = client.post(
+            f"/api/v1/projects/{pid}/classes",
+            json={"name": "安全帽"},
+            headers=_h("admin"),
+        ).json()["id"]
+        c2 = client.post(
+            f"/api/v1/projects/{pid}/classes",
+            json={"name": "工作服"},
+            headers=_h("admin"),
+        ).json()["id"]
+        created = client.post(
+            f"/api/v1/projects/{pid}/datasets",
+            json={"name": "现场"},
+            headers=_h("admin"),
+        )
+        assert created.status_code == 201, created.text
+        assert [c["id"] for c in created.json()["classes"]] == [c1, c2]
+        c3 = client.post(
+            f"/api/v1/projects/{pid}/classes",
+            json={"name": "手套"},
+            headers=_h("admin"),
+        ).json()["id"]
+        again = client.get(
+            f"/api/v1/datasets/{created.json()['id']}", headers=_h("admin")
+        ).json()
+        assert [c["id"] for c in again["classes"]] == [c1, c2, c3]

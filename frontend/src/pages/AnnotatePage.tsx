@@ -1116,7 +1116,7 @@ function AnnotateInner() {
           <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.9rem' }}>类别</h3>
           {classes.length === 0 ? (
             <p style={{ margin: 0, color: 'var(--lt-fg-subtle)', fontSize: 13 }}>
-              本数据集还没启用类别。请先在项目页创建类别，再在数据集页启用。
+              本数据集还没启用类别。请先在 YOLO类别页创建；已有类别可在数据集页重新勾选。
             </p>
           ) : (
             <div style={{ display: 'grid', gap: 4 }}>
