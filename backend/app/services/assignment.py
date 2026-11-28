@@ -42,6 +42,34 @@ def require_can_annotate(
     raise ForbiddenError("该成员已分配给其他用户")
 
 
+def default_owner_assignee_id(
+    db: Session,
+    project_id: UUID,
+    preferred_user_id: str | None = None,
+) -> str | None:
+    """入集默认执行人：优先当前操作者（若为 owner），否则取项目最早的一名 owner。"""
+    if preferred_user_id:
+        m = db.scalar(
+            select(Membership).where(
+                Membership.project_id == project_id,
+                Membership.user_id == preferred_user_id,
+            )
+        )
+        if m is not None and is_project_owner(m):
+            return preferred_user_id
+    owners = list(
+        db.scalars(
+            select(Membership)
+            .where(Membership.project_id == project_id)
+            .order_by(Membership.created_at.asc())
+        ).all()
+    )
+    for m in owners:
+        if is_project_owner(m):
+            return m.user_id
+    return preferred_user_id
+
+
 def resolve_assignee_user_id(
     db: Session, project_id: UUID, assignee_user_id: str | None
 ) -> str | None:

@@ -93,6 +93,7 @@
 ### Requirement: 成员任务分配
 系统 SHALL 允许将数据集成员分配给项目内可写成员（`owner` / `annotator`）。每个成员至多一名 `assignee`；`assignee` 为空表示未分配。不新增角色。
 
+- **入集默认**：新加入数据集的成员 MUST 默认将 `assignee` 设为一名项目 `owner`（优先为当前操作者若其为 owner，否则取该项目一名 owner），以免负责人再手动「全部分给自己」。清空分配后仍可为未分配。
 - **改分配**：仅 `owner` 可单条或批量指定/清空 `assignee`。
 - **可见性**：`owner`（及只读 `viewer`）可列出全部成员；仅有 `annotator`、无 `owner` 的成员列出时 MUST 只看到分给自己的成员。
 - **未分配**：非 `owner` 不得对未分配成员写入标注。
@@ -100,6 +101,10 @@
 - **发版**：P0 仍要求数据集**全部**成员均已 `submitted`（含未分配），分配不改变发版门槛。
 
 产品 UI：数据集页供 owner 多选成员后批量分配；标注台 owner 可切换「只看我的 / 全部」，annotator 默认只看自己的。
+
+#### Scenario: 入集默认分给负责人
+- **WHEN** owner 将素材加入数据集
+- **THEN** 新成员的 `assignee` 为该 owner（或项目内一名 owner），无需再点分配
 
 #### Scenario: 批量分配给标注员
 - **WHEN** owner 将 50 名成员批量指定给用户甲

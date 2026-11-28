@@ -22,6 +22,7 @@ from app.models.asset import Asset
 from app.models.dataset import Dataset, DatasetAsset
 from app.models.dataset_import import DatasetImport
 from app.services.assets import _sha256, _storage_key
+from app.services.assignment import default_owner_assignee_id
 from app.services.project_classes import ensure_classes_from_names
 from app.services.export_yolo import image_size_from_bytes
 from app.storage.factory import get_blob_store, get_default_write_backend
@@ -306,6 +307,9 @@ def run_dataset_import(import_id: UUID) -> dict[str, Any]:
             raise ValidationAppError("目标数据集非空，P0 仅支持导入到新建或空数据集")
 
         class_ids = _ensure_classes(db, ds.id, classes)
+        default_assignee = default_owner_assignee_id(
+            db, ds.project_id, imp.created_by
+        )
 
         created = 0
         reused = 0
@@ -364,6 +368,7 @@ def run_dataset_import(import_id: UUID) -> dict[str, Any]:
                         dataset_id=ds.id,
                         asset_id=asset.id,
                         split=img.split,
+                        assignee_user_id=default_assignee,
                     )
                 )
             else:

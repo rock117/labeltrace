@@ -1006,7 +1006,7 @@ function DatasetsInner() {
                     fontSize: 13,
                   }}
                 >
-                  点击缩略图多选后可分配任务或批量移出（只删引用）。划分在发版时指定。
+                  入集默认分给负责人；需要时多选后改分或清空。也可批量移出（只删引用）。划分在发版时指定。
                 </p>
                 {members.length === 0 ? (
                   <StateBlock

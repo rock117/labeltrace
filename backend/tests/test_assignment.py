@@ -47,20 +47,29 @@ def test_assign_visibility_and_annotate_gate() -> None:
             json={"name": "D"},
             headers=_h("boss"),
         ).json()["id"]
-        client.post(
+        added = client.post(
             f"/api/v1/datasets/{ds}/assets",
             json={"asset_ids": imgs, "split": "unassigned"},
             headers=_h("boss"),
         )
+        assert added.status_code == 200
 
         roster = client.get(
             f"/api/v1/projects/{pid}/members", headers=_h("boss")
         ).json()
         by_name = {m["username"]: m["user_id"] for m in roster}
+        uid_boss = by_name["boss"]
         uid_a = by_name["ann_a"]
         uid_c = by_name["ann_c"]
 
-        # 未分配：annotator 列表为空，写标注 403
+        # 入集默认分给 owner
+        assert all(x["assignee_user_id"] == uid_boss for x in added.json())
+        mine_boss = client.get(
+            f"/api/v1/datasets/{ds}/assets?mine=1", headers=_h("boss")
+        ).json()
+        assert len(mine_boss) == 3
+
+        # 仍分给 owner：annotator 列表为空，写标注 403
         empty = client.get(
             f"/api/v1/datasets/{ds}/assets", headers=_h("ann_a")
         ).json()
@@ -74,6 +83,24 @@ def test_assign_visibility_and_annotate_gate() -> None:
             },
         )
         assert denied.status_code == 403
+
+        # 清空后未分配：annotator 仍不可标
+        cleared = client.post(
+            f"/api/v1/datasets/{ds}/assignments",
+            headers=_h("boss"),
+            json={"assetIds": [imgs[0]], "assigneeUserId": None},
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()[0]["assignee_user_id"] is None
+        denied_unassigned = client.put(
+            f"/api/v1/datasets/{ds}/assets/{imgs[0]}/annotation",
+            headers=_h("ann_a"),
+            json={
+                "shapes": {"format": "xyxy_abs", "items": []},
+                "status": "draft",
+            },
+        )
+        assert denied_unassigned.status_code == 403
 
         # 批量：前两张给 A，第三张给 C
         assigned = client.post(
@@ -134,15 +161,15 @@ def test_assign_visibility_and_annotate_gate() -> None:
         ).json()
         assert c_after == []
 
-        # owner 可看全部；mine=1 只看自己的（老板未自分则空）
+        # owner 可看全部；转单后 mine=1 为空（都在 A 名下）
         all_mem = client.get(
             f"/api/v1/datasets/{ds}/assets", headers=_h("boss")
         ).json()
         assert len(all_mem) == 3
-        mine_boss = client.get(
+        mine_boss_after = client.get(
             f"/api/v1/datasets/{ds}/assets?mine=1", headers=_h("boss")
         ).json()
-        assert mine_boss == []
+        assert mine_boss_after == []
 
         # annotator 不能批量分配
         forbid_assign = client.post(

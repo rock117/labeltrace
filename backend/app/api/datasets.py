@@ -29,6 +29,7 @@ from app.models.dataset import Dataset, DatasetAsset
 from app.models.frame_extract_job import FrameExtractJob
 from app.models.project import Membership
 from app.services.assignment import (
+    default_owner_assignee_id,
     must_list_mine_only,
     resolve_assignee_user_id,
     usernames_for_ids,
@@ -280,6 +281,10 @@ def add_assets(
     if m is None or not has_any_role(m, WRITE_ROLES):
         raise ForbiddenError("权限不足")
 
+    default_assignee = default_owner_assignee_id(db, ds.project_id, user.id)
+    name_map = usernames_for_ids(
+        db, [default_assignee] if default_assignee else []
+    )
     out: list[DatasetAssetOut] = []
     for aid in body.asset_ids:
         asset = db.get(Asset, aid)
@@ -290,10 +295,13 @@ def add_assets(
         existing = db.get(DatasetAsset, (dataset_id, aid))
         if existing is None:
             row = DatasetAsset(
-                dataset_id=dataset_id, asset_id=aid, split=body.split
+                dataset_id=dataset_id,
+                asset_id=aid,
+                split=body.split,
+                assignee_user_id=default_assignee,
             )
             db.add(row)
-            assignee_uid = None
+            assignee_uid = default_assignee
             split = body.split
         else:
             assignee_uid = existing.assignee_user_id
@@ -305,6 +313,9 @@ def add_assets(
                 asset.media_kind,
                 asset.filename,
                 assignee_user_id=assignee_uid,
+                assignee_username=name_map.get(assignee_uid)
+                if assignee_uid
+                else None,
             )
         )
     db.commit()

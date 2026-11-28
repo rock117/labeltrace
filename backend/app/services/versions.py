@@ -16,6 +16,7 @@ from app.models.annotation import Annotation
 from app.models.asset import Asset
 from app.models.dataset import Dataset, DatasetAsset
 from app.models.version import DatasetVersion
+from app.services.assignment import default_owner_assignee_id
 from app.services.project_classes import (
     class_id_set,
     classes_for_version_snapshot,
@@ -305,6 +306,7 @@ def apply_version_to_workspace(
         raise ForbiddenError("权限不足")
 
     entries = list((ver.manifest or {}).get("entries") or [])
+    default_assignee = default_owner_assignee_id(db, ds.project_id, user_id)
     added = 0
     overwritten = 0
     skipped = 0
@@ -341,6 +343,7 @@ def apply_version_to_workspace(
                     dataset_id=ver.dataset_id,
                     asset_id=asset_id,
                     split=split,
+                    assignee_user_id=default_assignee,
                 )
             )
             added += 1
