@@ -53,7 +53,9 @@ def test_video_upload_extract_review_and_batch_delete(tmp_path: Path) -> None:
         listed = client.get(
             f"/api/v1/folders/{folder}/assets", headers=_h("v1")
         ).json()["items"]
-        assert any(a["id"] == vid and a["media_kind"] == "video" for a in listed)
+        before = next(a for a in listed if a["id"] == vid)
+        assert before["media_kind"] == "video"
+        assert before["extracted"] is False
 
         ex = client.post(
             f"/api/v1/assets/{vid}/extract-jobs",
@@ -96,6 +98,8 @@ def test_video_upload_extract_review_and_batch_delete(tmp_path: Path) -> None:
             f"/api/v1/folders/{folder}/assets", headers=_h("v1")
         ).json()["items"]
         assert all(a["media_kind"] != "frame" for a in listed2)
+        after = next(a for a in listed2 if a["id"] == vid)
+        assert after["extracted"] is True
 
         to_del = [items[0]["id"]]
         if len(items) > 1:

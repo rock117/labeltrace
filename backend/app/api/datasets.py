@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -24,14 +24,10 @@ from app.core.logging import get_logger
 from app.db.session import get_db
 from app.models.annotation import Annotation
 from app.models.asset import Asset
-from app.models.dataset import Dataset, DatasetAsset, DatasetClass
+from app.models.dataset import Dataset, DatasetAsset
 from app.models.frame_extract_job import FrameExtractJob
 from app.models.project import Membership
-from app.services.dataset_classes import (
-    classes_as_dicts,
-    create_classes_from_names,
-    replace_classes,
-)
+from app.services.project_classes import classes_as_dicts, set_dataset_class_ids
 
 router = APIRouter(tags=["datasets"])
 logger = get_logger("labeltrace.api.datasets")
@@ -47,8 +43,9 @@ class DatasetClassOut(BaseModel):
 
 
 class DatasetCreate(BaseModel):
+    """只建工作区。类别在项目词表创建，再经 PUT /classes 按 classIds 启用。"""
+
     name: str = Field(..., min_length=1, max_length=256)
-    classes: list[str] = Field(default_factory=list)
     enabled_annotation_types: list[str] = Field(
         default_factory=lambda: ["rect"],
         alias="enabledAnnotationTypes",
@@ -67,8 +64,10 @@ class DatasetOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class ClassesReplaceIn(BaseModel):
-    classes: list[dict[str, Any]] = Field(default_factory=list)
+class DatasetClassesIn(BaseModel):
+    class_ids: list[UUID] = Field(default_factory=list, alias="classIds")
+
+    model_config = {"populate_by_name": True}
 
 
 class AddAssetsIn(BaseModel):
@@ -126,8 +125,6 @@ def create_dataset(
         enabled_annotation_types=types,
     )
     db.add(ds)
-    db.flush()
-    create_classes_from_names(db, ds.id, list(body.classes or []))
     db.commit()
     db.refresh(ds)
     logger.info("dataset_created dataset_id=%s", ds.id)
@@ -198,15 +195,15 @@ def rename_dataset(
 @router.put("/datasets/{dataset_id}/classes", response_model=DatasetOut)
 def put_dataset_classes(
     dataset_id: UUID,
-    body: ClassesReplaceIn,
+    body: DatasetClassesIn,
     user: Annotated[CurrentUser, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DatasetOut:
-    """整表替换工作区类别（增/改名/调序/删）；删被引用类返回 409。"""
-    replace_classes(
+    """按顺序启用项目词表中的类别。停用仍被本集标注引用的类别返回 409。"""
+    set_dataset_class_ids(
         db,
         dataset_id=dataset_id,
-        items=list(body.classes or []),
+        class_ids=list(body.class_ids),
         user_id=user.id,
     )
     ds = db.get(Dataset, dataset_id)

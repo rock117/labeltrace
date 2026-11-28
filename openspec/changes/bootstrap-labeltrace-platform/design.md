@@ -109,8 +109,9 @@ FastAPI（鉴权、领域用例）
 | Folder | 项目内目录树（面向库可见素材） |
 | Asset | 媒体素材；`media_kind`：`image` \| `video` \| `frame`；存储与可见性字段同前；frame 另含 `parent_video_id`、`frame_index` |
 | Tag / AssetTag | 扁平标签 |
-| Dataset | 数据集；工作区类别；**`enabled_annotation_types`** |
-| DatasetClass | 数据集工作区类别：稳定 `id` + `name` + 顺序 `idx`（+ 可选 `color`）；标注引用 `classId`；YOLO 数字 id 仅导出/导入编解码 |
+| Dataset | 数据集；按 `DatasetClassRef` 有序启用项目类别；**`enabled_annotation_types`** |
+| ProjectClass | 项目类别词表：稳定 `id` + `name` + 可选 `color`；无顺序、无 YOLO 编号 |
+| DatasetClassRef | 数据集对项目类别的有序启用（`idx`）；标注 `classId` 指向 ProjectClass；YOLO 数字 id 仅按该顺序在导出/导入时编解码 |
 | DatasetAsset | 引用 + `split` |
 | Annotation | `(dataset_id, asset_id)`；`shapes` 为带 `type` 的异构列表 |
 | DatasetVersion | 不可变快照（含当时 `enabled_annotation_types` + shapes） |
@@ -325,7 +326,8 @@ datasets(
   enabled_annotation_types jsonb,  -- 如 ["rect"]；产品必做全集见 D1
   ...
 )
-dataset_classes(dataset_id, idx, name)
+project_classes(project_id, name unique, color?)
+dataset_class_refs(dataset_id, class_id, idx)
 dataset_assets(dataset_id, asset_id, split)
 annotations(dataset_id, asset_id, shapes jsonb, status, updated_by, updated_at, ...)
 
@@ -357,7 +359,7 @@ frame_extract_jobs(
 {
   "format": "xyxy_abs",
   "items": [
-    { "type": "rect", "classId": "<dataset_class_uuid>", "bbox": [10, 20, 110, 220] }
+    { "type": "rect", "classId": "<project_class_uuid>", "bbox": [10, 20, 110, 220] }
   ]
 }
 ```
@@ -372,7 +374,7 @@ frame_extract_jobs(
 上传 zip
   → 校验结构
   → 创建 DatasetImport(pending)
-  → 解析 names → 写入/覆盖工作区 classes（策略：新建数据集则写入；已有集则按 API 约定合并或拒绝）
+  → 解析 names → 项目词表按名字复用或新建，并按该顺序启用到目标数据集（不删除词表中其它类别）
   → 对每张图：hash → 复用或新建 Asset(origin=import, library_visible=false, folder_id=null, import_id=...)
   → DatasetAsset + Annotation（由 txt 转内部 shapes）+ split
   → Import succeeded + stats
@@ -402,9 +404,10 @@ P0 默认：**导入到新建数据集**（实现简单）；导入到已有空�
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/projects/{projectId}/datasets` | `{ name, classes?: string[]\|{name}[], enabledAnnotationTypes?: ["rect"] }` → 每类生成稳定 id |
-| GET | `/datasets/{datasetId}` | 含 `classes: [{id,name,idx,color?}]`、`enabledAnnotationTypes` |
-| PUT | `/datasets/{datasetId}/classes` | 整表替换有序列表（增/改名/调序/删）；删仍被引用类 → 409 |
+| GET/POST/PATCH/DELETE | `/projects/{projectId}/classes` | 项目词表。同名 409；删除时仍被选用、标注引用或已入版本 → 409 |
+| POST | `/projects/{projectId}/datasets` | `{ name, enabledAnnotationTypes?: ["rect"] }`；启用类别为空 |
+| GET | `/datasets/{datasetId}` | 含已启用 `classes: [{id,name,idx,color?}]`（id 为项目类别）、`enabledAnnotationTypes` |
+| PUT | `/datasets/{datasetId}/classes` | `{ classIds: uuid[] }` 按顺序启用词表子集；停用仍被本集标注引用的类别 → 409 |
 | PATCH | `/datasets/{datasetId}` | 可改启用类型（需校验策略） |
 | GET/POST/DELETE/PATCH | `/datasets/{datasetId}/assets...` | 成员与 split（同前） |
 | PUT | `/datasets/{datasetId}/assets/{assetId}/annotation` | shapes 每项必含 `type`；按启用类型 + Registry 校验 |

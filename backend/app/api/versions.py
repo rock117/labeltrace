@@ -65,19 +65,14 @@ class VersionOut(BaseModel):
 
 
 def _normalize_version_classes(raw: Any) -> list[VersionClassOut]:
-    """兼容旧快照 string[]；新快照 [{id,name}]。"""
+    """发版快照 [{id, name}]。"""
     out: list[VersionClassOut] = []
     if not isinstance(raw, list):
         return out
-    for i, item in enumerate(raw):
-        if isinstance(item, str):
-            out.append(VersionClassOut(id=f"legacy-{i}", name=item))
-        elif isinstance(item, dict) and item.get("name") is not None:
+    for item in raw:
+        if isinstance(item, dict) and item.get("id") and item.get("name") is not None:
             out.append(
-                VersionClassOut(
-                    id=str(item.get("id") or f"legacy-{i}"),
-                    name=str(item["name"]),
-                )
+                VersionClassOut(id=str(item["id"]), name=str(item["name"]))
             )
     return out
 

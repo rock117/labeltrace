@@ -186,9 +186,26 @@
 }
 
 .lt-media-card-thumb {
+  position: relative;
   aspect-ratio: 16 / 10;
   background: var(--lt-bg-canvas);
   overflow: hidden;
+}
+
+.lt-media-card-flag {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 1;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--lt-accent);
+  color: var(--lt-accent-fg);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 20px;
+  pointer-events: none;
 }
 
 .lt-media-card-thumb img,
@@ -218,13 +235,36 @@
   margin-top: 2px;
 }
 
-.lt-media-card-rename {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  height: 24px;
-  padding: 0 6px;
-  font-size: 11px;
+.lt-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 140px;
+  padding: 4px;
+  background: var(--lt-bg-elevated, var(--lt-bg));
+  border: 1px solid var(--lt-border);
+  border-radius: var(--lt-radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.lt-context-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.lt-context-menu button:hover:not(:disabled) {
+  background: var(--lt-accent-soft);
+}
+
+.lt-context-menu button.danger {
+  color: var(--lt-danger);
 }
 
 .lt-thumb-grid {

@@ -86,23 +86,12 @@ def test_tags_and_extract_into_dataset_then_delete_guard(tmp_path: Path) -> None
 
         ds = client.post(
             f"/api/v1/projects/{pid}/datasets",
-            json={"name": "检测集", "classes": ["缺陷"], "enabledAnnotationTypes": ["rect"]},
+            json={"name": "检测集", "enabledAnnotationTypes": ["rect"]},
             headers=_h("d1"),
         )
-        # pydantic uses enabled_annotation_types - check field alias
-        if ds.status_code == 422:
-            ds = client.post(
-                f"/api/v1/projects/{pid}/datasets",
-                json={
-                    "name": "检测集",
-                    "classes": ["缺陷"],
-                    "enabled_annotation_types": ["rect"],
-                },
-                headers=_h("d1"),
-            )
         assert ds.status_code == 201, ds.text
         did = ds.json()["id"]
-        assert ds.json()["classes"] == ["缺陷"]
+        assert ds.json()["classes"] == []
         assert ds.json()["enabled_annotation_types"] == ["rect"]
 
         added = client.post(

@@ -32,7 +32,7 @@ logger = get_logger("labeltrace.api.annotations")
 class AnnotationPut(BaseModel):
     shapes: dict[str, Any] = Field(
         ...,
-        description='{"format":"xyxy_abs","items":[{"type":"rect","cls":0,"bbox":[x1,y1,x2,y2]}]}',
+        description='{"format":"xyxy_abs","items":[{"type":"rect","classId":"<uuid>","bbox":[x1,y1,x2,y2]}]}',
     )
     status: Literal["draft", "submitted"] = "draft"
 
@@ -78,7 +78,7 @@ def put_annotation(
         raise ValidationAppError("素材不是该数据集成员，无法标注")
 
     enabled = list(ds.enabled_annotation_types or ["rect"])
-    from app.services.dataset_classes import class_id_set
+    from app.services.project_classes import class_id_set
 
     shapes = get_registry().validate_shapes(
         body.shapes,

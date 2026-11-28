@@ -22,7 +22,7 @@ from app.models.asset import Asset
 from app.models.dataset import Dataset, DatasetAsset
 from app.models.dataset_import import DatasetImport
 from app.services.assets import _sha256, _storage_key
-from app.services.dataset_classes import create_classes_from_names, list_classes
+from app.services.project_classes import ensure_classes_from_names
 from app.services.export_yolo import image_size_from_bytes
 from app.storage.factory import get_blob_store, get_default_write_backend
 
@@ -269,13 +269,8 @@ def parse_yolo_zip(zip_bytes: bytes) -> tuple[list[str], list[ParsedImage]]:
 
 
 def _ensure_classes(db: Session, dataset_id: UUID, classes: list[str]) -> list[str]:
-    """覆盖为空集写入类别，返回有序 classId 列表。"""
-    existing = list_classes(db, dataset_id)
-    for row in existing:
-        db.delete(row)
-    db.flush()
-    rows = create_classes_from_names(db, dataset_id, classes)
-    return [str(r.id) for r in rows]
+    """按 data.yaml 名字复用或新建项目类别，并按该顺序启用。"""
+    return ensure_classes_from_names(db, dataset_id, classes)
 
 
 def run_dataset_import(import_id: UUID) -> dict[str, Any]:
@@ -500,7 +495,7 @@ def create_dataset_import(
         )
         db.add(ds)
         db.flush()
-        create_classes_from_names(db, ds.id, classes)
+        ensure_classes_from_names(db, ds.id, classes)
     else:
         raise ValidationAppError("须提供 datasetName 或 datasetId")
 

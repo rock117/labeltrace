@@ -23,6 +23,7 @@ from app.core.logging import get_logger
 from app.db.session import get_db
 from app.models.asset import Asset
 from app.models.folder import Folder
+from app.models.frame_extract_job import FrameExtractJob
 from app.services.assets import (
     content_disposition_attachment,
     delete_asset,
@@ -57,6 +58,8 @@ class AssetOut(BaseModel):
     parent_video_id: UUID | None = None
     frame_index: int | None = None
     extract_job_id: UUID | None = None
+    # 视频是否已有成功抽帧任务；图片恒为 false。目录列表填充。
+    extracted: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -148,7 +151,7 @@ def list_folder_assets(
         Asset.media_kind.in_(kinds),
     )
     total = db.scalar(select(func.count()).select_from(Asset).where(*base)) or 0
-    items = list(
+    rows = list(
         db.scalars(
             select(Asset)
             .where(*base)
@@ -157,6 +160,25 @@ def list_folder_assets(
             .limit(limit)
         ).all()
     )
+    video_ids = [a.id for a in rows if a.media_kind == "video"]
+    extracted_ids: set[UUID] = set()
+    if video_ids:
+        extracted_ids = set(
+            db.scalars(
+                select(FrameExtractJob.video_asset_id)
+                .where(
+                    FrameExtractJob.video_asset_id.in_(video_ids),
+                    FrameExtractJob.status == "succeeded",
+                )
+                .distinct()
+            ).all()
+        )
+    items = []
+    for asset in rows:
+        item = AssetOut.model_validate(asset)
+        if asset.id in extracted_ids:
+            item.extracted = True
+        items.append(item)
     return FolderAssetsPage(items=items, total=total, limit=limit, offset=offset)
 
 

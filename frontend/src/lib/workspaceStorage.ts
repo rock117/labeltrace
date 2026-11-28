@@ -286,9 +286,10 @@ export function getStoredDatasetId(): string | null {
 
 export function setStoredDataset(
   dataset: { id: string; name: string } | null,
-  *,
-  projectId?: string | null,
-  keepChildren?: boolean,
+  {
+    projectId,
+    keepChildren,
+  }: { projectId?: string | null; keepChildren?: boolean } = {},
 ): void {
   if (!assertProject(projectId)) return
   update((p) => {
@@ -312,9 +313,10 @@ export function getStoredDatasetAssetId(): string | null {
 
 export function setStoredDatasetAssetId(
   assetId: string | null,
-  *,
-  projectId?: string | null,
-  datasetId?: string | null,
+  {
+    projectId,
+    datasetId,
+  }: { projectId?: string | null; datasetId?: string | null } = {},
 ): void {
   if (!assertProject(projectId)) return
   update((p) => {
@@ -330,9 +332,10 @@ export function getStoredDatasetVersionId(): string | null {
 
 export function setStoredDatasetVersionId(
   versionId: string | null,
-  *,
-  projectId?: string | null,
-  datasetId?: string | null,
+  {
+    projectId,
+    datasetId,
+  }: { projectId?: string | null; datasetId?: string | null } = {},
 ): void {
   if (!assertProject(projectId)) return
   update((p) => {
@@ -355,8 +358,7 @@ export function getStoredFolderId(): string | null {
 /** 换目录时整棵 folder 子树（含 video/extract）替换 */
 export function setStoredFolder(
   folder: { id: string; name: string } | null,
-  *,
-  projectId?: string | null,
+  { projectId }: { projectId?: string | null } = {},
 ): void {
   if (!assertProject(projectId)) return
   update((p) => {
@@ -398,8 +400,7 @@ export function getStoredExtractJobId(): string | null {
 
 export function setStoredLibraryVideo(
   video: { id: string; name?: string; extractJobId?: string | null } | null,
-  *,
-  projectId?: string | null,
+  { projectId }: { projectId?: string | null } = {},
 ): void {
   if (!assertProject(projectId)) return
   update((p) => {
@@ -439,9 +440,10 @@ export function setStoredLibraryVideo(
 
 export function setStoredExtractJobId(
   extractJobId: string | null,
-  *,
-  projectId?: string | null,
-  videoId?: string | null,
+  {
+    projectId,
+    videoId,
+  }: { projectId?: string | null; videoId?: string | null } = {},
 ): void {
   if (!assertProject(projectId)) return
   update((p) => {
@@ -481,8 +483,7 @@ export function getStoredBrowseKind(): 'video' | 'image' {
 
 export function setStoredBrowseKind(
   browseKind: 'video' | 'image',
-  *,
-  projectId?: string | null,
+  { projectId }: { projectId?: string | null } = {},
 ): void {
   if (!assertProject(projectId)) return
   update((p) => ({

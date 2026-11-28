@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
-import type { Project } from '../lib/types'
+import type { Project, ProjectClass } from '../lib/types'
 import { useAppStore } from '../store/appStore'
 import { formatError } from '../hooks/useAsync'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
-import { appPrompt } from '../store/dialogStore'
+import { appConfirm, appPrompt } from '../store/dialogStore'
 
 type ProjectRole = 'owner' | 'annotator' | 'viewer'
 
@@ -48,6 +48,9 @@ export function ProjectsPage() {
 
   const [membersOf, setMembersOf] = useState<string | null>(null)
   const [members, setMembers] = useState<Member[]>([])
+  const [classes, setClasses] = useState<ProjectClass[]>([])
+  const [className, setClassName] = useState('')
+  const [classColor, setClassColor] = useState('#0f766e')
   const [membersLoading, setMembersLoading] = useState(false)
   const [newMemberId, setNewMemberId] = useState('')
   const [newMemberRoles, setNewMemberRoles] = useState<ProjectRole[]>([
@@ -102,13 +105,82 @@ export function ProjectsPage() {
     setMembersLoading(true)
     setError(null)
     try {
-      const list = await api<Member[]>(`/v1/projects/${pid}/members`)
+      const [list, vocabulary] = await Promise.all([
+        api<Member[]>(`/v1/projects/${pid}/members`),
+        api<ProjectClass[]>(`/v1/projects/${pid}/classes`),
+      ])
       setMembers(list)
+      setClasses(vocabulary)
     } catch (e) {
       setError(formatError(e))
       setMembers([])
+      setClasses([])
     } finally {
       setMembersLoading(false)
+    }
+  }
+
+  const addClass = async (pid: string) => {
+    const next = className.trim()
+    if (!next) return
+    setBusy(true)
+    setError(null)
+    try {
+      await api<ProjectClass>(`/v1/projects/${pid}/classes`, {
+        method: 'POST',
+        body: JSON.stringify({ name: next, color: classColor }),
+      })
+      setClassName('')
+      await loadMembers(pid)
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const renameClass = async (pid: string, cls: ProjectClass) => {
+    const next = await appPrompt({
+      title: '重命名类别',
+      label: '名称',
+      defaultValue: cls.name,
+      confirmLabel: '保存',
+    })
+    if (next == null) return
+    const name = next.trim()
+    if (!name || name === cls.name) return
+    setBusy(true)
+    setError(null)
+    try {
+      await api(`/v1/projects/${pid}/classes/${cls.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+      })
+      await loadMembers(pid)
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeClass = async (pid: string, cls: ProjectClass) => {
+    const ok = await appConfirm({
+      title: '删除类别',
+      description: `删除「${cls.name}」？若仍被数据集选用、标注引用或已写入版本，删除会被拒绝。`,
+      confirmLabel: '删除',
+      danger: true,
+    })
+    if (!ok) return
+    setBusy(true)
+    setError(null)
+    try {
+      await api(`/v1/projects/${pid}/classes/${cls.id}`, { method: 'DELETE' })
+      await loadMembers(pid)
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -447,6 +519,117 @@ export function ProjectsPage() {
                       </button>
                     </div>
                   ) : null}
+                  <div
+                    style={{
+                      marginTop: 16,
+                      paddingTop: 12,
+                      borderTop: '1px solid var(--lt-border)',
+                    }}
+                  >
+                    <h3 style={{ margin: '0 0 0.35rem', fontSize: '0.95rem' }}>
+                      类别词表
+                    </h3>
+                    <p
+                      style={{
+                        margin: '0 0 0.75rem',
+                        fontSize: 13,
+                        color: 'var(--lt-fg-muted)',
+                      }}
+                    >
+                      类别属于项目。数据集页只选用其中一部分并排导出顺序。改名不改变已有框引用的 id；已发版本保留发版时的名称。
+                    </p>
+                    {classes.length === 0 ? (
+                      <p style={{ margin: '0 0 0.75rem', fontSize: 13 }}>
+                        还没有类别。
+                      </p>
+                    ) : (
+                      <ul
+                        style={{
+                          listStyle: 'none',
+                          margin: '0 0 0.75rem',
+                          padding: 0,
+                          display: 'grid',
+                          gap: 8,
+                        }}
+                      >
+                        {classes.map((c) => (
+                          <li
+                            key={c.id}
+                            style={{
+                              display: 'flex',
+                              gap: 8,
+                              alignItems: 'center',
+                              flexWrap: 'wrap',
+                            }}
+                          >
+                            <span
+                              style={{
+                                width: 14,
+                                height: 14,
+                                borderRadius: 3,
+                                background: c.color || '#0f766e',
+                              }}
+                            />
+                            <span>{c.name}</span>
+                            {myRoles(p.id).some((r) => r === 'owner' || r === 'annotator') ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="lt-btn"
+                                  disabled={busy}
+                                  onClick={() => void renameClass(p.id, c)}
+                                >
+                                  改名
+                                </button>
+                                <button
+                                  type="button"
+                                  className="lt-btn lt-btn-danger"
+                                  disabled={busy}
+                                  onClick={() => void removeClass(p.id, c)}
+                                >
+                                  删除
+                                </button>
+                              </>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {myRoles(p.id).some((r) => r === 'owner' || r === 'annotator') ? (
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: 8,
+                          flexWrap: 'wrap',
+                          alignItems: 'center',
+                        }}
+                      >
+                        <input
+                          className="lt-input"
+                          placeholder="新类别名"
+                          value={className}
+                          onChange={(e) => setClassName(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && void addClass(p.id)}
+                          style={{ maxWidth: 180 }}
+                        />
+                        <input
+                          type="color"
+                          title="颜色"
+                          value={classColor}
+                          onChange={(e) => setClassColor(e.target.value)}
+                          style={{ width: 36, height: 32, padding: 0, border: 'none' }}
+                        />
+                        <button
+                          type="button"
+                          className="lt-btn lt-btn-primary"
+                          disabled={busy || !className.trim()}
+                          onClick={() => void addClass(p.id)}
+                        >
+                          添加类别
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
             </div>

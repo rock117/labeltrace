@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,7 @@ from app.auth.deps import (
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.core.logging import get_logger
 from app.db.session import get_db
+from app.models.asset import Asset
 from app.models.folder import Folder
 from app.models.project import Membership
 
@@ -39,8 +40,38 @@ class FolderOut(BaseModel):
     parent_id: UUID | None
     name: str
     path: str
+    # 该目录内直接存放的库可见视频 / 图片数（不含子孙目录、不含 frame）
+    video_count: int = 0
+    image_count: int = 0
 
     model_config = {"from_attributes": True}
+
+
+def _direct_media_counts(
+    db: Session, folder_ids: list[UUID]
+) -> dict[UUID, tuple[int, int]]:
+    counts = {fid: (0, 0) for fid in folder_ids}
+    if not folder_ids:
+        return counts
+    rows = db.execute(
+        select(Asset.folder_id, Asset.media_kind, func.count())
+        .where(
+            Asset.folder_id.in_(folder_ids),
+            Asset.library_visible.is_(True),
+            Asset.media_kind.in_(("image", "video")),
+        )
+        .group_by(Asset.folder_id, Asset.media_kind)
+    ).all()
+    video: dict[UUID, int] = {}
+    image: dict[UUID, int] = {}
+    for folder_id, kind, n in rows:
+        if folder_id is None:
+            continue
+        if kind == "video":
+            video[folder_id] = int(n)
+        elif kind == "image":
+            image[folder_id] = int(n)
+    return {fid: (video.get(fid, 0), image.get(fid, 0)) for fid in folder_ids}
 
 
 def _build_path(parent: Folder | None, name: str) -> str:
@@ -103,14 +134,27 @@ def list_folders(
     _: Annotated[Membership, Depends(require_project_role(*ALL_ROLES))],
     db: Annotated[Session, Depends(get_db)],
     parent_id: UUID | None = Query(default=None),
-) -> list[Folder]:
+) -> list[FolderOut]:
     stmt = select(Folder).where(Folder.project_id == project_id)
     if parent_id is None:
         stmt = stmt.where(Folder.parent_id.is_(None))
     else:
         stmt = stmt.where(Folder.parent_id == parent_id)
     stmt = stmt.order_by(Folder.name)
-    return list(db.scalars(stmt).all())
+    folders = list(db.scalars(stmt).all())
+    counts = _direct_media_counts(db, [f.id for f in folders])
+    return [
+        FolderOut(
+            id=f.id,
+            project_id=f.project_id,
+            parent_id=f.parent_id,
+            name=f.name,
+            path=f.path,
+            video_count=counts[f.id][0],
+            image_count=counts[f.id][1],
+        )
+        for f in folders
+    ]
 
 
 @router.get("/folders/{folder_id}", response_model=FolderOut)

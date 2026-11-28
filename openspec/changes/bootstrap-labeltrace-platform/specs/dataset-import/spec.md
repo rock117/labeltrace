@@ -7,13 +7,13 @@
 ## ADDED Requirements
 
 ### Requirement: 导入 YOLO 数据集包
-系统 SHALL 以 **zip** 形式接受 YOLO 检测数据包（multipart 上传；含图像、labels 与 `data.yaml`），并创建或填充目标数据集的类别、成员划分与工作标注。P0 支持导入到**新建数据集**或**已有空数据集**；非空数据集 MUST 拒绝。导入为异步任务，完成后可查询状态与 stats。
+系统 SHALL 以 **zip** 形式接受 YOLO 检测数据包（multipart 上传；含图像、labels 与 `data.yaml`），并创建或填充目标数据集的成员划分与工作标注。类别按 `data.yaml` 的 `names` 顺序处理：项目词表中已有同名类别则复用其 id，否则在项目词表中新建；再按该顺序启用到目标数据集（替换该数据集原先的启用列表，不删除词表中未被本次启用的其它类别）。标注行中的数字下标映射为对应类别的 `classId`。P0 支持导入到**新建数据集**或**已有空数据集**；非空数据集 MUST 拒绝。导入为异步任务，完成后可查询状态与 stats。
 
 约定结构（与导出一致）：根目录 `data.yaml`；`train|val|test/images` 与对应 `labels`（同 stem 的 `.txt`，`cls cx cy w h` 归一化；可空）。
 
 #### Scenario: 导入新建数据集
 - **WHEN** 用户上传合法 YOLO zip 并指定新建数据集名称
-- **THEN** 系统创建数据集，写入 classes，将包内图像与标签变为数据集成员及对应标注（标注 status=submitted）
+- **THEN** 系统创建数据集，按包内类别名复用或新建项目类别并按该顺序启用，将包内图像与标签变为数据集成员及对应标注（标注 status=submitted，几何 `classId` 为对应项目类别）
 
 #### Scenario: 非法包结构被拒绝
 - **WHEN** 用户上传缺少必要类别配置或无法解析的 zip

@@ -28,6 +28,8 @@
 ## 3. 素材库（asset-library）
 
 - [x] 3.1 实现 Folder 树 CRUD（同级重名 409），并验证嵌套创建与路径/列表正确
+- [x] 3.1b 子目录列表返回直接视频/图片数量；素材库子目录右键重命名并展示该数量
+- [x] 3.1c 目录视频列表标记已成功抽帧的视频（封面角标）
 - [x] 3.2 Asset 支持 `media_kind`（image/video/frame）；实现图片上传（`image`）与 content 读取（RFC 5987 文件名），并验证中文路径展示与 hash 型 storage_key
 - [x] 3.3 实现内容哈希去重与移动、目录列表过滤、引用硬删 409（同前约定）
 
@@ -51,6 +53,7 @@
 ## 5. 数据集（datasets）
 
 - [x] 5.1 实现 Dataset 创建（含有序 classes、`enabled_annotation_types` 默认 `["rect"]`）与详情 API，并验证类别与启用类型读回正确
+- [x] 5.1b 创建数据集只提交名称、启用类别为空；类别在项目词表创建，数据集页按 classIds 启用（YOLO 导入按名字复用或新建）
 - [x] 5.2 实现 DatasetAsset 加入/移除（不拷贝、不硬删文件），并验证同一 asset 可属两个数据集
 - [x] 5.3 实现 split 更新（train/val/test/unassigned），并验证读回一致
 - [x] 5.4 增加跨项目引用防护测试，验证将他项素材加入本项数据集被拒绝
@@ -125,6 +128,7 @@
 
 - [x] 7c.1 shapes 改用 `classId`；DatasetClass 可维护（PUT classes）；发版冻结 `[{id,name}]`；导出按序映射 YOLO 下标
 - [x] 7c.2 数据集页类别编辑 UI；标注台按类选色/快捷键；无类或非法 classId 拒绝发版
+- [x] 7c.3 类别改为项目词表；数据集按 classIds 有序启用；导入按名字复用或新建项目类别。不迁移旧 dataset_classes
 
 ## 后续规划（不阻塞本 change）
 

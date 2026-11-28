@@ -42,7 +42,6 @@ function rectItems(shapes: { items?: unknown[] } | null | undefined): RectShape[
     const s = raw as Record<string, unknown>
     if (s.type !== 'rect') continue
     const classId = typeof s.classId === 'string' ? s.classId : null
-    // 旧数据仅有 cls、无 classId：跳过，避免渲染崩溃白屏
     if (!classId) continue
     const bbox = s.bbox
     if (!Array.isArray(bbox) || bbox.length < 4) continue
@@ -1117,7 +1116,7 @@ function AnnotateInner() {
           <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.9rem' }}>类别</h3>
           {classes.length === 0 ? (
             <p style={{ margin: 0, color: 'var(--lt-fg-subtle)', fontSize: 13 }}>
-              尚无类别，请先在数据集页维护类别后再标注。
+              本数据集还没启用类别。请先在项目页创建类别，再在数据集页启用。
             </p>
           ) : (
             <div style={{ display: 'grid', gap: 4 }}>

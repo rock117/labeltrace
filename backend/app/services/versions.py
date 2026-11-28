@@ -16,7 +16,7 @@ from app.models.annotation import Annotation
 from app.models.asset import Asset
 from app.models.dataset import Dataset, DatasetAsset
 from app.models.version import DatasetVersion
-from app.services.dataset_classes import (
+from app.services.project_classes import (
     class_id_set,
     classes_for_version_snapshot,
     list_classes,

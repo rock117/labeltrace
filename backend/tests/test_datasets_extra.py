@@ -38,7 +38,7 @@ def test_split_cross_project_and_hidden_only_dataset() -> None:
 
         ds = client.post(
             f"/api/v1/projects/{p1}/datasets",
-            json={"name": "D", "classes": ["c"], "enabled_annotation_types": ["rect"]},
+            json={"name": "D", "enabled_annotation_types": ["rect"]},
             headers=_h("a"),
         ).json()
         did = ds["id"]
@@ -68,7 +68,7 @@ def test_split_cross_project_and_hidden_only_dataset() -> None:
         # 同一 asset 可属两个数据集
         ds2 = client.post(
             f"/api/v1/projects/{p1}/datasets",
-            json={"name": "D2", "classes": ["c"]},
+            json={"name": "D2"},
             headers=_h("a"),
         ).json()["id"]
         ok = client.post(

@@ -61,26 +61,41 @@ def test_annotation_isolation_publish_and_lineage() -> None:
 
         d1_body = client.post(
             f"/api/v1/projects/{pid}/datasets",
-            json={
-                "name": "A",
-                "classes": ["缺陷"],
-                "enabled_annotation_types": ["rect"],
-            },
+            json={"name": "A", "enabled_annotation_types": ["rect"]},
             headers=_h("admin"),
         ).json()
         d2_body = client.post(
             f"/api/v1/projects/{pid}/datasets",
-            json={
-                "name": "B",
-                "classes": ["缺陷"],
-                "enabled_annotation_types": ["rect"],
-            },
+            json={"name": "B", "enabled_annotation_types": ["rect"]},
             headers=_h("admin"),
         ).json()
+        assert d1_body["classes"] == []
         d1 = d1_body["id"]
         d2 = d2_body["id"]
-        c1 = d1_body["classes"][0]["id"]
-        c2 = d2_body["classes"][0]["id"]
+        c1 = client.post(
+            f"/api/v1/projects/{pid}/classes",
+            json={"name": "缺陷"},
+            headers=_h("admin"),
+        ).json()["id"]
+        c2 = client.post(
+            f"/api/v1/projects/{pid}/classes",
+            json={"name": "污渍"},
+            headers=_h("admin"),
+        ).json()["id"]
+        c1_res = client.put(
+            f"/api/v1/datasets/{d1}/classes",
+            json={"classIds": [c1]},
+            headers=_h("admin"),
+        )
+        c2_res = client.put(
+            f"/api/v1/datasets/{d2}/classes",
+            json={"classIds": [c2]},
+            headers=_h("admin"),
+        )
+        assert c1_res.status_code == 200, c1_res.text
+        assert c2_res.status_code == 200, c2_res.text
+        assert c1_res.json()["classes"][0]["id"] == c1
+        assert c2_res.json()["classes"][0]["id"] == c2
 
         # 非成员拒绝
         assert (
@@ -176,18 +191,23 @@ def test_annotation_isolation_publish_and_lineage() -> None:
         )
         assert bad.status_code == 422
 
-        # 改名保留 classId；删除被引用类 409
-        renamed = client.put(
-            f"/api/v1/datasets/{d1}/classes",
-            json={"classes": [{"id": c1, "name": "缺陷-A"}]},
+        # 项目里改名保留 classId；停用被引用类 409
+        renamed = client.patch(
+            f"/api/v1/projects/{pid}/classes/{c1}",
+            json={"name": "缺陷-A"},
             headers=_h("admin"),
         )
         assert renamed.status_code == 200, renamed.text
-        assert renamed.json()["classes"][0]["name"] == "缺陷-A"
-        assert renamed.json()["classes"][0]["id"] == c1
+        assert renamed.json()["id"] == c1
+        assert renamed.json()["name"] == "缺陷-A"
+        ds_after = client.get(
+            f"/api/v1/datasets/{d1}", headers=_h("admin")
+        ).json()
+        assert ds_after["classes"][0]["name"] == "缺陷-A"
+        assert ds_after["classes"][0]["id"] == c1
         blocked = client.put(
             f"/api/v1/datasets/{d1}/classes",
-            json={"classes": [{"name": "别的"}]},
+            json={"classIds": [c2]},
             headers=_h("admin"),
         )
         assert blocked.status_code == 409, blocked.text
@@ -264,6 +284,29 @@ def test_annotation_isolation_publish_and_lineage() -> None:
         assert v2.status_code == 201
         assert v2.json()["change_summary"]["changedAnnotations"] == 1
         assert v2.json()["parent_id"] == vid
+
+        dup = client.post(
+            f"/api/v1/projects/{pid}/classes",
+            json={"name": "缺陷-A"},
+            headers=_h("admin"),
+        )
+        assert dup.status_code == 409, dup.text
+        blocked_delete = client.delete(
+            f"/api/v1/projects/{pid}/classes/{c1}",
+            headers=_h("admin"),
+        )
+        assert blocked_delete.status_code == 409, blocked_delete.text
+        spare = client.post(
+            f"/api/v1/projects/{pid}/classes",
+            json={"name": "临时"},
+            headers=_h("admin"),
+        )
+        assert spare.status_code == 201, spare.text
+        removed = client.delete(
+            f"/api/v1/projects/{pid}/classes/{spare.json()['id']}",
+            headers=_h("admin"),
+        )
+        assert removed.status_code == 204, removed.text
 
         lin = client.get(f"/api/v1/assets/{img}/lineage", headers=_h("admin"))
         assert lin.status_code == 200

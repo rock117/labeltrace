@@ -77,14 +77,23 @@ def test_main_path_upload_extract_review_annotate_publish(tmp_path: Path) -> Non
         ds = client.post(
             f"/api/v1/projects/{pid}/datasets",
             headers=_h("main"),
-            json={
-                "name": "主集",
-                "classes": ["obj"],
-                "enabledAnnotationTypes": ["rect"],
-            },
+            json={"name": "主集", "enabledAnnotationTypes": ["rect"]},
         ).json()
+        assert ds["classes"] == []
         did = ds["id"]
-        cid = ds["classes"][0]["id"]
+        created_cls = client.post(
+            f"/api/v1/projects/{pid}/classes",
+            headers=_h("main"),
+            json={"name": "obj"},
+        )
+        assert created_cls.status_code == 201, created_cls.text
+        cid = created_cls.json()["id"]
+        classed = client.put(
+            f"/api/v1/datasets/{did}/classes",
+            headers=_h("main"),
+            json={"classIds": [cid]},
+        )
+        assert classed.status_code == 200, classed.text
 
         listed = client.get(
             f"/api/v1/projects/{pid}/datasets", headers=_h("main")

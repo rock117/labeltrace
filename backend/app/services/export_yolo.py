@@ -156,9 +156,7 @@ def _version_class_names(raw: Any) -> list[str]:
     if not isinstance(raw, list):
         return names
     for item in raw:
-        if isinstance(item, str):
-            names.append(item)
-        elif isinstance(item, dict) and item.get("name") is not None:
+        if isinstance(item, dict) and item.get("name") is not None:
             names.append(str(item["name"]))
     return names
 
@@ -170,8 +168,6 @@ def _class_id_to_index(raw: Any) -> dict[str, int]:
     for i, item in enumerate(raw):
         if isinstance(item, dict) and item.get("id") is not None:
             mapping[str(item["id"])] = i
-        elif isinstance(item, str):
-            mapping[f"legacy-{i}"] = i
     return mapping
 
 
@@ -251,9 +247,6 @@ def build_yolo_zip_bytes(
                 cid = item.get("classId")
                 if cid is not None and str(cid) in id_to_idx:
                     cls_idx = id_to_idx[str(cid)]
-                elif item.get("cls") is not None:
-                    # 旧快照兼容
-                    cls_idx = int(item.get("cls") or 0)
                 else:
                     logger.warning(
                         "export_missing_class asset_id=%s item=%s",

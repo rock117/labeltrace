@@ -92,6 +92,16 @@ def test_import_creates_hidden_assets_and_dedup() -> None:
         assert row["stats"]["images"] == 2
         assert row["stats"]["created"] == 2
 
+        imported = client.get(
+            f"/api/v1/datasets/{dataset_id}", headers=_h("imp-owner")
+        ).json()
+        assert imported["classes"][0]["name"] == "缺陷"
+        class_id = imported["classes"][0]["id"]
+        vocab = client.get(
+            f"/api/v1/projects/{pid}/classes", headers=_h("imp-owner")
+        ).json()
+        assert [c["id"] for c in vocab] == [class_id]
+
         mem = client.get(
             f"/api/v1/datasets/{dataset_id}/assets", headers=_h("imp-owner")
         ).json()
@@ -127,7 +137,7 @@ def test_import_creates_hidden_assets_and_dedup() -> None:
         # 再次导入相同内容到新空集 → reused
         empty = client.post(
             f"/api/v1/projects/{pid}/datasets",
-            json={"name": "空集复用", "classes": ["缺陷"]},
+            json={"name": "空集复用"},
             headers=_h("imp-owner"),
         ).json()["id"]
         r2 = client.post(
@@ -149,3 +159,11 @@ def test_import_creates_hidden_assets_and_dedup() -> None:
         assert row2["status"] == "succeeded", row2
         assert row2["stats"]["reused"] == 2
         assert row2["stats"]["created"] == 0
+        reused_ds = client.get(
+            f"/api/v1/datasets/{empty}", headers=_h("imp-owner")
+        ).json()
+        assert reused_ds["classes"][0]["id"] == class_id
+        vocab_after = client.get(
+            f"/api/v1/projects/{pid}/classes", headers=_h("imp-owner")
+        ).json()
+        assert len(vocab_after) == 1

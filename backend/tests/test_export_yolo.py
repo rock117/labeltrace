@@ -81,15 +81,23 @@ def test_export_zip_matches_snapshot() -> None:
 
         ds_body = client.post(
             f"/api/v1/projects/{pid}/datasets",
-            json={
-                "name": "导出集",
-                "classes": ["缺陷"],
-                "enabled_annotation_types": ["rect"],
-            },
+            json={"name": "导出集", "enabled_annotation_types": ["rect"]},
             headers=_h("exp-owner"),
         ).json()
         ds = ds_body["id"]
-        cid = ds_body["classes"][0]["id"]
+        created_cls = client.post(
+            f"/api/v1/projects/{pid}/classes",
+            json={"name": "缺陷"},
+            headers=_h("exp-owner"),
+        )
+        assert created_cls.status_code == 201, created_cls.text
+        cid = created_cls.json()["id"]
+        classed = client.put(
+            f"/api/v1/datasets/{ds}/classes",
+            json={"classIds": [cid]},
+            headers=_h("exp-owner"),
+        )
+        assert classed.status_code == 200, classed.text
         client.post(
             f"/api/v1/datasets/{ds}/assets",
             json={"asset_ids": [img1, img2]},

@@ -34,25 +34,25 @@ class Dataset(Base):
     )
 
 
-class DatasetClass(Base):
-    __tablename__ = "dataset_classes"
+class DatasetClassRef(Base):
+    """数据集按顺序启用的项目类别。名字与颜色在 project_classes。"""
+
+    __tablename__ = "dataset_class_refs"
     __table_args__ = (
-        UniqueConstraint("dataset_id", "idx", name="uq_dataset_class_idx"),
-        UniqueConstraint("dataset_id", "name", name="uq_dataset_class_name"),
+        UniqueConstraint("dataset_id", "idx", name="uq_dataset_class_ref_idx"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
     dataset_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("datasets.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
+        primary_key=True,
+    )
+    class_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("project_classes.id", ondelete="RESTRICT"),
+        primary_key=True,
     )
     idx: Mapped[int] = mapped_column(Integer, nullable=False)
-    name: Mapped[str] = mapped_column(String(128), nullable=False)
-    color: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
 class DatasetAsset(Base):

@@ -16,7 +16,7 @@ import { AuthVideo } from '../components/AuthVideo'
 import { AuthVideoThumb } from '../components/AuthVideoThumb'
 import { LoadingBlock, StateBlock } from '../components/StateBlock'
 import { RequireProject } from '../components/RequireProject'
-import { appPrompt } from '../store/dialogStore'
+import { appConfirm, appPrompt } from '../store/dialogStore'
 import {
   getStoredBrowseKind,
   getStoredExtractJobId,
@@ -40,6 +40,8 @@ function LibraryInner() {
   const [browseKind, setBrowseKind] = useState<BrowseKind>(getStoredBrowseKind())
   const [assets, setAssets] = useState<Asset[]>([])
   const [total, setTotal] = useState(0)
+  const [videoCount, setVideoCount] = useState(0)
+  const [imageCount, setImageCount] = useState(0)
   const [page, setPage] = useState(0)
   const [selectedVideo, setSelectedVideo] = useState<Asset | null>(null)
   const [selectedImage, setSelectedImage] = useState<Asset | null>(null)
@@ -53,6 +55,21 @@ function LibraryInner() {
   const [targetDatasetId, setTargetDatasetId] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<{
+    index: number
+    total: number
+    name: string
+  } | null>(null)
+  const [assetMenu, setAssetMenu] = useState<{
+    x: number
+    y: number
+    asset: Asset
+  } | null>(null)
+  const [folderMenu, setFolderMenu] = useState<{
+    x: number
+    y: number
+    folder: Folder
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -70,12 +87,25 @@ function LibraryInner() {
   const loadAssetsPage = useCallback(
     async (folderId: string, kind: BrowseKind, pageIndex: number) => {
       const offset = pageIndex * PAGE_SIZE
-      const data = await api<AssetsPage>(
-        `/v1/folders/${folderId}/assets?media_kind=${kind}&limit=${PAGE_SIZE}&offset=${offset}`,
-      )
+      const other: BrowseKind = kind === 'video' ? 'image' : 'video'
+      const [data, otherPage] = await Promise.all([
+        api<AssetsPage>(
+          `/v1/folders/${folderId}/assets?media_kind=${kind}&limit=${PAGE_SIZE}&offset=${offset}`,
+        ),
+        api<AssetsPage>(
+          `/v1/folders/${folderId}/assets?media_kind=${other}&limit=1&offset=0`,
+        ),
+      ])
       setAssets(data.items)
       setTotal(data.total)
       setPage(pageIndex)
+      if (kind === 'video') {
+        setVideoCount(data.total)
+        setImageCount(otherPage.total)
+      } else {
+        setImageCount(data.total)
+        setVideoCount(otherPage.total)
+      }
     },
     [],
   )
@@ -167,6 +197,8 @@ function LibraryInner() {
       }
       setFolder(next)
       setTrail(nextTrail)
+      setVideoCount(0)
+      setImageCount(0)
       setSelectedVideo(null)
       setSelectedImage(null)
       setAssets([])
@@ -381,6 +413,54 @@ function LibraryInner() {
     }
   }
 
+  const deleteAsset = async (asset: Asset) => {
+    const ok = await appConfirm({
+      title: '删除素材',
+      description: `删除「${asset.filename}」？文件会被移除。若仍被数据集或版本引用，删除会被拒绝。`,
+      confirmLabel: '删除',
+      danger: true,
+    })
+    if (!ok) return
+    setBusy(true)
+    setError(null)
+    try {
+      await api(`/v1/assets/${asset.id}`, { method: 'DELETE' })
+      if (selectedVideo?.id === asset.id) {
+        setSelectedVideo(null)
+        setExtractJob(null)
+        setFrames([])
+        setVideoJobs([])
+        setStoredLibraryVideo(null, { projectId })
+      }
+      if (selectedImage?.id === asset.id) setSelectedImage(null)
+      if (folder) await loadAssetsPage(folder.id, browseKind, page)
+      setMessage(`已删除：${asset.filename}`)
+    } catch (e) {
+      setError(formatError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!assetMenu && !folderMenu) return
+    const close = () => {
+      setAssetMenu(null)
+      setFolderMenu(null)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close()
+    }
+    window.addEventListener('click', close)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [assetMenu, folderMenu])
+
   const upload = async (files: FileList | File[]) => {
     if (!folder) {
       setError('请先创建或选择一个目录，再上传')
@@ -391,11 +471,18 @@ function LibraryInner() {
     setBusy(true)
     setError(null)
     setMessage(null)
+    setUploadProgress({ index: 0, total: list.length, name: list[0].name })
     try {
       let lastVideo: Asset | null = null
       let nImg = 0
       let nVid = 0
-      for (const file of list) {
+      for (let i = 0; i < list.length; i++) {
+        const file = list[i]
+        setUploadProgress({
+          index: i + 1,
+          total: list.length,
+          name: file.name,
+        })
         const fd = new FormData()
         fd.append('file', file)
         const asset = await api<Asset>(`/v1/folders/${folder.id}/assets`, {
@@ -431,6 +518,7 @@ function LibraryInner() {
     } catch (e) {
       setError(formatError(e))
     } finally {
+      setUploadProgress(null)
       setBusy(false)
     }
   }
@@ -476,6 +564,17 @@ function LibraryInner() {
       if (job.status === 'succeeded') {
         const fr = await api<FrameCandidate[]>(`/v1/extract-jobs/${id}/frames`)
         setFrames(fr)
+        const videoId = selectedVideo?.id
+        if (videoId) {
+          setAssets((prev) =>
+            prev.map((a) =>
+              a.id === videoId ? { ...a, extracted: true } : a,
+            ),
+          )
+          setSelectedVideo((cur) =>
+            cur && cur.id === videoId ? { ...cur, extracted: true } : cur,
+          )
+        }
         setMessage(`抽帧完成，共 ${fr.length} 帧（按时间升序；不进入目录列表）`)
         return
       }
@@ -564,12 +663,21 @@ function LibraryInner() {
         <label
           className="lt-btn lt-btn-primary"
           style={{
-            cursor: folder ? 'pointer' : 'not-allowed',
-            opacity: folder ? 1 : 0.5,
+            cursor: folder && !busy ? 'pointer' : 'not-allowed',
+            opacity: folder && !uploadProgress ? 1 : 0.65,
+            pointerEvents: busy ? 'none' : undefined,
           }}
-          title={folder ? '上传到当前目录' : '请先选择目录'}
+          title={
+            uploadProgress
+              ? `正在上传 ${uploadProgress.name}`
+              : folder
+                ? '上传到当前目录'
+                : '请先选择目录'
+          }
         >
-          上传到当前目录
+          {uploadProgress
+            ? `上传中 ${uploadProgress.index}/${uploadProgress.total}…`
+            : '上传到当前目录'}
           <input
             type="file"
             accept="video/*,image/*"
@@ -587,7 +695,12 @@ function LibraryInner() {
       {error ? (
         <StateBlock tone="error" title="出错了" description={error} />
       ) : null}
-      {message ? (
+      {uploadProgress ? (
+        <p style={{ color: 'var(--lt-fg-muted)', marginTop: 0 }}>
+          正在上传 {uploadProgress.index}/{uploadProgress.total} ·{' '}
+          {uploadProgress.name}
+        </p>
+      ) : message ? (
         <p style={{ color: 'var(--lt-fg-muted)', marginTop: 0 }}>{message}</p>
       ) : null}
 
@@ -679,13 +792,29 @@ function LibraryInner() {
               {childFolders.map((f) => (
                 <div
                   key={f.id}
-                  style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    if (busy) return
+                    setAssetMenu(null)
+                    setFolderMenu({
+                      folder: f,
+                      x: Math.max(
+                        8,
+                        Math.min(e.clientX, window.innerWidth - 148 - 8),
+                      ),
+                      y: Math.max(
+                        8,
+                        Math.min(e.clientY, window.innerHeight - 44 - 8),
+                      ),
+                    })
+                  }}
                 >
                   <button
                     type="button"
                     className="lt-btn"
+                    title={f.path}
                     style={{
-                      flex: 1,
+                      width: '100%',
                       justifyContent: 'flex-start',
                       height: 'auto',
                       padding: '0.55rem 0.65rem',
@@ -693,7 +822,7 @@ function LibraryInner() {
                     }}
                     onClick={() => void enterFolder(f, [...trail, f])}
                   >
-                    <span style={{ textAlign: 'left', minWidth: 0 }}>
+                    <span style={{ textAlign: 'left', minWidth: 0, width: '100%' }}>
                       <div
                         style={{
                           fontWeight: 600,
@@ -714,18 +843,9 @@ function LibraryInner() {
                           whiteSpace: 'nowrap',
                         }}
                       >
-                        {f.path}
+                        视频 {f.video_count ?? 0} · 图片 {f.image_count ?? 0}
                       </div>
                     </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="lt-btn"
-                    disabled={busy}
-                    title="重命名目录"
-                    onClick={() => void renameFolder(f)}
-                  >
-                    改名
                   </button>
                 </div>
               ))}
@@ -758,7 +878,7 @@ function LibraryInner() {
                     }
                     onClick={() => void switchBrowseKind('video')}
                   >
-                    视频
+                    视频 {videoCount}
                   </button>
                   <button
                     type="button"
@@ -767,14 +887,14 @@ function LibraryInner() {
                     }
                     onClick={() => void switchBrowseKind('image')}
                   >
-                    上传图片
+                    上传图片 {imageCount}
                   </button>
                 </div>
                 <span
                   className="mono"
                   style={{ fontSize: 12, color: 'var(--lt-fg-subtle)' }}
                 >
-                  共 {total} · 第 {page + 1}/{pageCount} 页
+                  第 {page + 1}/{pageCount} 页
                 </span>
                 <span style={{ flex: 1 }} />
                 <button
@@ -814,6 +934,24 @@ function LibraryInner() {
                       <div
                         key={a.id}
                         className={`lt-media-card${isActive ? ' selected' : ''}`}
+                        onContextMenu={(e) => {
+                          e.preventDefault()
+                          if (busy) return
+                          const menuW = 148
+                          const menuH = 76
+                          setFolderMenu(null)
+                          setAssetMenu({
+                            asset: a,
+                            x: Math.max(
+                              8,
+                              Math.min(e.clientX, window.innerWidth - menuW - 8),
+                            ),
+                            y: Math.max(
+                              8,
+                              Math.min(e.clientY, window.innerHeight - menuH - 8),
+                            ),
+                          })
+                        }}
                       >
                         <button
                           type="button"
@@ -840,6 +978,9 @@ function LibraryInner() {
                             ) : (
                               <AuthImage assetId={a.id} alt={a.filename} />
                             )}
+                            {a.media_kind === 'video' && a.extracted ? (
+                              <span className="lt-media-card-flag">已抽帧</span>
+                            ) : null}
                           </div>
                           <div className="lt-media-card-meta">
                             <div className="lt-media-card-name">{a.filename}</div>
@@ -854,16 +995,11 @@ function LibraryInner() {
                               {a.media_kind === 'video' && a.fps != null
                                 ? ` · ${a.fps.toFixed(1)} fps`
                                 : ''}
+                              {a.media_kind === 'video' && a.extracted
+                                ? ' · 已抽帧'
+                                : ''}
                             </div>
                           </div>
-                        </button>
-                        <button
-                          type="button"
-                          className="lt-btn lt-media-card-rename"
-                          disabled={busy}
-                          onClick={() => void renameAsset(a)}
-                        >
-                          改名
                         </button>
                       </div>
                     )
@@ -1112,6 +1248,58 @@ function LibraryInner() {
           )}
         </section>
       </div>
+      {assetMenu ? (
+        <div
+          className="lt-context-menu"
+          style={{ left: assetMenu.x, top: assetMenu.y }}
+          onContextMenu={(e) => e.preventDefault()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              const asset = assetMenu.asset
+              setAssetMenu(null)
+              void renameAsset(asset)
+            }}
+          >
+            重命名
+          </button>
+          <button
+            type="button"
+            className="danger"
+            disabled={busy}
+            onClick={() => {
+              const asset = assetMenu.asset
+              setAssetMenu(null)
+              void deleteAsset(asset)
+            }}
+          >
+            删除
+          </button>
+        </div>
+      ) : null}
+      {folderMenu ? (
+        <div
+          className="lt-context-menu"
+          style={{ left: folderMenu.x, top: folderMenu.y }}
+          onContextMenu={(e) => e.preventDefault()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              const target = folderMenu.folder
+              setFolderMenu(null)
+              void renameFolder(target)
+            }}
+          >
+            重命名
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -5,9 +5,9 @@ import type {
   Asset,
   Dataset,
   DatasetAsset,
-  DatasetClass,
   Folder,
   MemberSource,
+  ProjectClass,
   ProjectExtractJob,
 } from '../lib/types'
 import { useAppStore } from '../store/appStore'
@@ -51,12 +51,11 @@ function DatasetsInner() {
   const [members, setMembers] = useState<DatasetAsset[]>([])
   const [sources, setSources] = useState<MemberSource[]>([])
   const [name, setName] = useState('')
-  const [classesText, setClassesText] = useState('person,car')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [importName, setImportName] = useState('')
-  const [classDraft, setClassDraft] = useState<DatasetClass[]>([])
-  const [newClassName, setNewClassName] = useState('')
+  const [projectClasses, setProjectClasses] = useState<ProjectClass[]>([])
+  const [enabledIds, setEnabledIds] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -91,7 +90,7 @@ function DatasetsInner() {
       setActiveId(id)
       setStoredDataset({ id: ds.id, name: ds.name }, { projectId })
       setActive(ds)
-      setClassDraft(ds.classes.map((c) => ({ ...c })))
+      setEnabledIds(ds.classes.map((c) => c.id))
       setMembers(mem)
       setSources(src)
       setPickedMembers(new Set())
@@ -101,25 +100,19 @@ function DatasetsInner() {
     [loadExtractJobs, projectId],
   )
 
-  const saveClasses = async () => {
+  const saveEnabledClasses = async () => {
     if (!active) return
     setBusy(true)
     setError(null)
     try {
       const ds = await api<Dataset>(`/v1/datasets/${active.id}/classes`, {
         method: 'PUT',
-        body: JSON.stringify({
-          classes: classDraft.map((c) => ({
-            id: c.id.startsWith('tmp-') ? undefined : c.id,
-            name: c.name,
-            color: c.color ?? null,
-          })),
-        }),
+        body: JSON.stringify({ classIds: enabledIds }),
       })
       setActive(ds)
-      setClassDraft(ds.classes.map((c) => ({ ...c })))
+      setEnabledIds(ds.classes.map((c) => c.id))
       setDatasets((prev) => prev.map((d) => (d.id === ds.id ? ds : d)))
-      setMessage(`已更新类别（${ds.classes.length}）`)
+      setMessage(`已更新启用类别（${ds.classes.length}）`)
     } catch (e) {
       setError(formatError(e))
     } finally {
@@ -131,11 +124,13 @@ function DatasetsInner() {
     setLoading(true)
     setError(null)
     try {
-      const [list, folderList] = await Promise.all([
+      const [list, folderList, vocabulary] = await Promise.all([
         api<Dataset[]>(`/v1/projects/${projectId}/datasets`),
         listAllFolders(projectId),
+        api<ProjectClass[]>(`/v1/projects/${projectId}/classes`),
       ])
       setDatasets(list)
+      setProjectClasses(vocabulary)
       setFolders(folderList)
       const firstFolder = folderList[0]?.id || ''
       setLibraryFolderId((prev) =>
@@ -174,15 +169,10 @@ function DatasetsInner() {
     setBusy(true)
     setError(null)
     try {
-      const classes = classesText
-        .split(/[,，\s]+/)
-        .map((s) => s.trim())
-        .filter(Boolean)
       const ds = await api<Dataset>(`/v1/projects/${projectId}/datasets`, {
         method: 'POST',
         body: JSON.stringify({
           name: name.trim(),
-          classes,
           enabledAnnotationTypes: ['rect'],
         }),
       })
@@ -444,13 +434,7 @@ function DatasetsInner() {
             placeholder="数据集名称"
             value={name}
             onChange={(e) => setName(e.target.value)}
-          />
-          <input
-            className="lt-input"
-            placeholder="类别，逗号分隔"
-            value={classesText}
-            onChange={(e) => setClassesText(e.target.value)}
-            style={{ maxWidth: 240 }}
+            onKeyDown={(e) => e.key === 'Enter' && void create()}
           />
           <button
             type="button"
@@ -583,7 +567,7 @@ function DatasetsInner() {
               </div>
 
               <div className="lt-panel" style={{ padding: '1rem', marginBottom: '1rem' }}>
-                <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem' }}>类别</h3>
+                <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem' }}>启用类别</h3>
                 <p
                   style={{
                     margin: '0 0 0.75rem',
@@ -591,90 +575,79 @@ function DatasetsInner() {
                     color: 'var(--lt-fg-muted)',
                   }}
                 >
-                  标注引用稳定 id；改名/调序不打乱已有框。删除仍被引用的类别会被拒绝。导出
-                  YOLO 时按此顺序编号 0..n-1。
+                  类别在项目里创建。这里只选择本数据集用哪些，并排好导出顺序。改名在项目页，框仍引用同一个 id。仍被本集标注引用的类别不能停用。导出 YOLO 时按此顺序编号 0..n-1。
                 </p>
+                {projectClasses.length === 0 ? (
+                  <p style={{ margin: '0 0 0.75rem', fontSize: 13 }}>
+                    项目还没有类别。请先到项目页创建，再回到这里启用。
+                  </p>
+                ) : null}
                 <div style={{ display: 'grid', gap: 6 }}>
-                  {classDraft.map((c, i) => (
-                    <div
-                      key={c.id}
-                      style={{
-                        display: 'flex',
-                        gap: 8,
-                        flexWrap: 'wrap',
-                        alignItems: 'center',
-                      }}
-                    >
-                      <span className="mono" style={{ width: 24, opacity: 0.6 }}>
-                        {i}
-                      </span>
-                      <input
-                        className="lt-input"
-                        value={c.name}
-                        onChange={(e) => {
-                          const name = e.target.value
-                          setClassDraft((prev) =>
-                            prev.map((row, j) =>
-                              j === i ? { ...row, name } : row,
-                            ),
-                          )
-                        }}
-                        style={{ maxWidth: 200 }}
-                      />
-                      <input
-                        type="color"
-                        title="颜色"
-                        value={c.color || '#0f766e'}
-                        onChange={(e) => {
-                          const color = e.target.value.toUpperCase()
-                          setClassDraft((prev) =>
-                            prev.map((row, j) =>
-                              j === i ? { ...row, color } : row,
-                            ),
-                          )
-                        }}
-                        style={{ width: 36, height: 32, padding: 0, border: 'none' }}
-                      />
-                      <button
-                        type="button"
-                        className="lt-btn"
-                        disabled={busy || i === 0}
-                        onClick={() => {
-                          setClassDraft((prev) => {
-                            const next = [...prev]
-                            ;[next[i - 1], next[i]] = [next[i], next[i - 1]]
-                            return next
-                          })
+                  {enabledIds.map((id, i) => {
+                    const cls = projectClasses.find((c) => c.id === id)
+                    return (
+                      <div
+                        key={id}
+                        style={{
+                          display: 'flex',
+                          gap: 8,
+                          flexWrap: 'wrap',
+                          alignItems: 'center',
                         }}
                       >
-                        上移
-                      </button>
-                      <button
-                        type="button"
-                        className="lt-btn"
-                        disabled={busy || i >= classDraft.length - 1}
-                        onClick={() => {
-                          setClassDraft((prev) => {
-                            const next = [...prev]
-                            ;[next[i], next[i + 1]] = [next[i + 1], next[i]]
-                            return next
-                          })
-                        }}
-                      >
-                        下移
-                      </button>
-                      <button
-                        type="button"
-                        className="lt-btn lt-btn-danger"
-                        disabled={busy}
-                        onClick={() =>
-                          setClassDraft((prev) => prev.filter((_, j) => j !== i))
-                        }
-                      >
-                        删除
-                      </button>
-                    </div>
-                  ))}
+                        <span className="mono" style={{ width: 24, opacity: 0.6 }}>
+                          {i}
+                        </span>
+                        <span
+                          style={{
+                            width: 14,
+                            height: 14,
+                            borderRadius: 3,
+                            background: cls?.color || '#0f766e',
+                          }}
+                        />
+                        <span style={{ minWidth: 80 }}>{cls?.name ?? id.slice(0, 8)}</span>
+                        <button
+                          type="button"
+                          className="lt-btn"
+                          disabled={busy || i === 0}
+                          onClick={() =>
+                            setEnabledIds((prev) => {
+                              const next = [...prev]
+                              ;[next[i - 1], next[i]] = [next[i], next[i - 1]]
+                              return next
+                            })
+                          }
+                        >
+                          上移
+                        </button>
+                        <button
+                          type="button"
+                          className="lt-btn"
+                          disabled={busy || i >= enabledIds.length - 1}
+                          onClick={() =>
+                            setEnabledIds((prev) => {
+                              const next = [...prev]
+                              ;[next[i], next[i + 1]] = [next[i + 1], next[i]]
+                              return next
+                            })
+                          }
+                        >
+                          下移
+                        </button>
+                        <button
+                          type="button"
+                          className="lt-btn lt-btn-danger"
+                          disabled={busy}
+                          onClick={() =>
+                            setEnabledIds((prev) => prev.filter((x) => x !== id))
+                          }
+                        >
+                          停用
+                        </button>
+                      </div>
+                    )
+                  })}
                 </div>
                 <div
                   style={{
@@ -685,42 +658,30 @@ function DatasetsInner() {
                     alignItems: 'center',
                   }}
                 >
-                  <input
-                    className="lt-input"
-                    placeholder="新类别名"
-                    value={newClassName}
-                    onChange={(e) => setNewClassName(e.target.value)}
-                    style={{ maxWidth: 180 }}
-                  />
-                  <button
-                    type="button"
-                    className="lt-btn"
-                    disabled={busy || !newClassName.trim()}
-                    onClick={() => {
-                      const name = newClassName.trim()
-                      if (!name) return
-                      setClassDraft((prev) => [
-                        ...prev,
-                        {
-                          id: `tmp-${crypto.randomUUID()}`,
-                          name,
-                          idx: prev.length,
-                          color: null,
-                        },
-                      ])
-                      setNewClassName('')
-                    }}
-                  >
-                    添加
-                  </button>
+                  {projectClasses
+                    .filter((c) => !enabledIds.includes(c.id))
+                    .map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        className="lt-btn"
+                        disabled={busy}
+                        onClick={() => setEnabledIds((prev) => [...prev, c.id])}
+                      >
+                        启用 {c.name}
+                      </button>
+                    ))}
                   <button
                     type="button"
                     className="lt-btn lt-btn-primary"
                     disabled={busy}
-                    onClick={() => void saveClasses()}
+                    onClick={() => void saveEnabledClasses()}
                   >
-                    保存类别
+                    保存启用顺序
                   </button>
+                  <Link to="/projects" className="lt-btn">
+                    去项目页管理类别
+                  </Link>
                 </div>
               </div>
 

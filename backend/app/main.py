@@ -12,6 +12,7 @@ from app.api.annotations import router as annotations_router
 from app.api.assets import router as assets_router
 from app.api.auth import router as auth_router
 from app.api.datasets import router as datasets_router
+from app.api.project_classes import router as project_classes_router
 from app.api.extract import router as extract_router
 from app.api.folders import router as folders_router
 from app.api.imports import router as imports_router
@@ -74,6 +75,7 @@ app.include_router(folders_router, prefix="/api/v1")
 app.include_router(assets_router, prefix="/api/v1")
 app.include_router(extract_router, prefix="/api/v1")
 app.include_router(tags_router, prefix="/api/v1")
+app.include_router(project_classes_router, prefix="/api/v1")
 app.include_router(datasets_router, prefix="/api/v1")
 app.include_router(imports_router, prefix="/api/v1")
 app.include_router(annotations_router, prefix="/api/v1")

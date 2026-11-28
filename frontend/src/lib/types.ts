@@ -6,6 +6,9 @@ export type Folder = {
   parent_id: string | null
   name: string
   path: string
+  /** 该目录内直接存放的库可见视频 / 图片数 */
+  video_count?: number
+  image_count?: number
 }
 
 export type Asset = {
@@ -27,6 +30,8 @@ export type Asset = {
   parent_video_id: string | null
   frame_index: number | null
   extract_job_id: string | null
+  /** 目录列表：该视频是否已有成功抽帧任务 */
+  extracted?: boolean
 }
 
 export type AssetsPage = {
@@ -76,6 +81,13 @@ export type FrameCandidate = {
   filename: string
   extract_job_id: string | null
   parent_video_id: string | null
+}
+
+export type ProjectClass = {
+  id: string
+  project_id: string
+  name: string
+  color?: string | null
 }
 
 export type DatasetClass = {

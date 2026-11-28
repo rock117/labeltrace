@@ -70,6 +70,7 @@ powershell -File scripts/dev-web.ps1   # 另开终端
 |------|------|
 | [运行与部署](docs/guides/运行与部署.md) | 本地运行、环境变量、Docker |
 | [数据集从上传到发版](docs/guides/数据集从上传到发版.md) | 视频主路径与迭代说明 |
+| [与主流标注平台的差异与待补功能](docs/与主流标注平台的差异与待补功能.md) | 相对 Roboflow/CVAT 等差异与可能需要的功能 |
 | [后台任务](docs/jobs.md) | JobBackend / 日后 worker |
 | [OpenSpec 变更](openspec/changes/bootstrap-labeltrace-platform/) | 需求、设计、任务 |
 
