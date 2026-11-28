@@ -772,7 +772,8 @@
   border: none;
   padding: 0;
   margin: 0;
-  background: color-mix(in srgb, var(--lt-fg) 55%, #000);
+  /* 透出原页面，仅靠点击空白关闭 */
+  background: transparent;
   cursor: pointer;
 }
 
@@ -787,7 +788,10 @@
   background: var(--lt-bg-elevated);
   border: 1px solid var(--lt-border);
   border-radius: var(--lt-radius-lg);
-  box-shadow: var(--lt-shadow);
+  /* 无遮罩时用更明显阴影区分前景 */
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--lt-border) 80%, transparent),
+    0 12px 40px rgba(15, 23, 32, 0.22);
   overflow: hidden;
 }
 
@@ -808,15 +812,22 @@
 }
 
 .lt-lightbox-meta {
+  flex: 1;
   min-width: 0;
   display: grid;
   gap: 2px;
 }
 
 .lt-lightbox-meta strong {
+  display: block;
   font-size: 14px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lt-lightbox-close {
+  flex-shrink: 0;
   white-space: nowrap;
 }
 
@@ -824,6 +835,9 @@
 .lt-lightbox-hint {
   font-size: 12px;
   color: var(--lt-fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lt-lightbox-stage {
@@ -843,9 +857,15 @@
   height: 100%;
   display: grid;
   place-items: center;
+  /* visible：避免视频原生控件被裁切 */
   overflow: hidden;
   background: var(--lt-bg-muted);
   border-radius: var(--lt-radius);
+}
+
+.lt-lightbox-image-wrap.is-video {
+  overflow: visible;
+  background: #000;
 }
 
 .lt-lightbox-image-wrap > * {
@@ -868,13 +888,55 @@
   height: 100%;
   display: grid;
   place-items: center;
+  min-height: 0;
+  min-width: 0;
 }
 
-.lt-lightbox-video video {
-  width: 100%;
-  height: 100%;
+/* 紧贴视频尺寸，▶ 相对画面居中；为控件条留出底部空间 */
+.lt-lightbox-video-inner {
+  position: relative;
+  display: inline-grid;
+  max-width: 100%;
   max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.lt-lightbox-video-inner video {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: min(100%, 860px);
+  /* 固定上限，给原生控件条留位置，避免有的片源看起来像静图 */
+  max-height: min(56vh, 520px);
   object-fit: contain;
+  background: #000;
+  border-radius: var(--lt-radius);
+}
+
+.lt-lightbox-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--lt-fg) 72%, transparent);
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  pointer-events: auto;
+}
+
+.lt-lightbox-play:hover {
+  background: var(--lt-accent);
 }
 
 .lt-lightbox-nav {

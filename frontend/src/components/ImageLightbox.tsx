@@ -94,13 +94,17 @@ export function ImageLightbox({
         <div className="lt-lightbox-head">
           <div className="lt-lightbox-meta">
             <strong title={current.title}>{current.title}</strong>
-            <span>
+            <span title={current.subtitle || undefined}>
               {safeIndex + 1} / {items.length}
               {current.subtitle ? ` · ${current.subtitle}` : ''}
               {isVideo ? ' · 视频' : ''}
             </span>
           </div>
-          <button type="button" className="lt-btn lt-btn-ghost" onClick={onClose}>
+          <button
+            type="button"
+            className="lt-btn lt-btn-ghost lt-lightbox-close"
+            onClick={onClose}
+          >
             关闭
           </button>
         </div>
@@ -115,7 +119,9 @@ export function ImageLightbox({
           >
             上一张
           </button>
-          <div className="lt-lightbox-image-wrap">
+          <div
+            className={`lt-lightbox-image-wrap${isVideo ? ' is-video' : ''}`}
+          >
             {isVideo ? (
               <AuthVideo
                 key={current.id}

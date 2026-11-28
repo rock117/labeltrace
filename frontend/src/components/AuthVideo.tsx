@@ -27,10 +27,12 @@ export function AuthVideo({
   const videoRef = useRef<HTMLVideoElement>(null)
   const [frameUrl, setFrameUrl] = useState<string | null>(null)
   const [t, setT] = useState(0)
+  const [paused, setPaused] = useState(true)
 
   useEffect(() => {
     setFrameUrl(null)
     setT(0)
+    setPaused(true)
   }, [url])
 
   const grabFrame = () => {
@@ -91,43 +93,40 @@ export function AuthVideo({
     )
   }
 
-  const videoEl = (
-    <video
-      ref={videoRef}
-      src={url}
-      controls
-      playsInline
-      preload="metadata"
-      onSeeked={playerOnly ? undefined : grabFrame}
-      onPause={playerOnly ? undefined : grabFrame}
-      style={{
-        display: 'block',
-        width: '100%',
-        maxWidth: '100%',
-        height: playerOnly ? '100%' : 'auto',
-        maxHeight: playerOnly ? '100%' : maxHeight,
-        objectFit: playerOnly ? 'contain' : undefined,
-        background: '#000',
-        borderRadius: 'var(--lt-radius)',
-      }}
-    />
-  )
+  const togglePlay = () => {
+    const video = videoRef.current
+    if (!video) return
+    if (video.paused) void video.play()
+    else video.pause()
+  }
 
   if (playerOnly) {
     return (
-      <div
-        className={className}
-        style={{
-          minWidth: 0,
-          width: '100%',
-          height: '100%',
-          maxWidth: '100%',
-          overflow: 'hidden',
-          display: 'grid',
-          placeItems: 'center',
-        }}
-      >
-        {videoEl}
+      <div className={className}>
+        <div className="lt-lightbox-video-inner">
+          <video
+            ref={videoRef}
+            src={url}
+            controls
+            playsInline
+            preload="auto"
+            onPlay={() => setPaused(false)}
+            onPause={() => setPaused(true)}
+            onClick={(e) => {
+              if (e.target === videoRef.current) togglePlay()
+            }}
+          />
+          {paused ? (
+            <button
+              type="button"
+              className="lt-lightbox-play"
+              aria-label="播放"
+              onClick={togglePlay}
+            >
+              ▶
+            </button>
+          ) : null}
+        </div>
       </div>
     )
   }
@@ -143,7 +142,29 @@ export function AuthVideo({
         overflow: 'hidden',
       }}
     >
-      {videoEl}
+      <video
+        ref={videoRef}
+        src={url}
+        controls
+        playsInline
+        preload="metadata"
+        onSeeked={grabFrame}
+        onPlay={() => setPaused(false)}
+        onPause={() => {
+          setPaused(true)
+          grabFrame()
+        }}
+        style={{
+          display: 'block',
+          width: '100%',
+          maxWidth: '100%',
+          height: 'auto',
+          maxHeight,
+          objectFit: 'contain',
+          background: '#000',
+          borderRadius: 'var(--lt-radius)',
+        }}
+      />
       <div
         style={{
           display: 'flex',
